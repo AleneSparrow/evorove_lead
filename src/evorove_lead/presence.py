@@ -1,0 +1,233 @@
+"""Read the owner's public site. Not third-party ad libraries, not secrets."""
+
+from __future__ import annotations
+
+import ipaddress
+import socket
+from html.parser import HTMLParser
+from typing import Protocol
+from urllib.error import URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
+
+from evorove_lead.business import BusinessSeed
+from evorove_lead.materials import DepositedMaterial
+
+MAX_BODY_BYTES = 1_000_000
+FETCH_TIMEOUT_SECONDS = 10
+USER_AGENT = "EvoroveLead/0.1 (cycle-1 business presence)"
+
+
+class PresenceRejected(ValueError):
+    """The engine will not treat this as the owner's public site."""
+
+
+class PresenceSource(Protocol):
+    def load(self, seed: BusinessSeed) -> tuple[DepositedMaterial, ...]:
+        """Return the business's own words, named by source."""
+
+
+class _PageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.headings: list[str] = []
+        self._parts: list[str] = []
+        self._skip = 0
+        self._in_title = False
+        self._heading_buf: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered = tag.lower()
+        if lowered in {"script", "style", "noscript"}:
+            self._skip += 1
+            return
+        if lowered == "title":
+            self._in_title = True
+            return
+        if lowered in {"h1", "h2"} and self._skip == 0:
+            self._heading_buf = []
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.lower()
+        if lowered in {"script", "style", "noscript"} and self._skip:
+            self._skip -= 1
+            return
+        if lowered == "title":
+            self._in_title = False
+            return
+        if lowered in {"h1", "h2"} and self._heading_buf:
+            heading = _collapse(" ".join(self._heading_buf))
+            if heading:
+                self.headings.append(heading)
+            self._heading_buf = []
+
+    def handle_data(self, data: str) -> None:
+        if self._skip:
+            return
+        chunk = data.strip()
+        if not chunk:
+            return
+        if self._in_title:
+            self.title = _collapse(f"{self.title} {chunk}")
+        if self._heading_buf is not None and self._heading_buf != [] or False:
+            pass
+        self._parts.append(chunk)
+        if self._heading_buf is not None:
+            # Buffer heading text only while a heading is open.
+            # handle_starttag resets the list; we append whenever the last
+            # start was a heading and it has not been closed yet.
+            pass
+
+
+def _collapse(text: str) -> str:
+    return " ".join(text.split())
+
+
+class PageParser(HTMLParser):
+    """Visible title, headings, and body from the owner's HTML."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title = ""
+        self.headings: list[str] = []
+        self._parts: list[str] = []
+        self._skip = 0
+        self._in_title = False
+        self._in_heading = False
+        self._heading_buf: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        lowered = tag.lower()
+        if lowered in {"script", "style", "noscript"}:
+            self._skip += 1
+        elif self._skip:
+            return
+        elif lowered == "title":
+            self._in_title = True
+        elif lowered in {"h1", "h2"}:
+            self._in_heading = True
+            self._heading_buf = []
+
+    def handle_endtag(self, tag: str) -> None:
+        lowered = tag.lower()
+        if lowered in {"script", "style", "noscript"} and self._skip:
+            self._skip -= 1
+            return
+        if self._skip:
+            return
+        if lowered == "title":
+            self._in_title = False
+            return
+        if lowered in {"h1", "h2"} and self._in_heading:
+            heading = _collapse(" ".join(self._heading_buf))
+            if heading:
+                self.headings.append(heading)
+            self._in_heading = False
+            self._heading_buf = []
+
+    def handle_data(self, data: str) -> None:
+        if self._skip:
+            return
+        chunk = " ".join(data.split())
+        if not chunk:
+            return
+        if self._in_title:
+            self.title = _collapse(f"{self.title} {chunk}")
+        if self._in_heading:
+            self._heading_buf.append(chunk)
+        self._parts.append(chunk)
+
+    @property
+    def body(self) -> str:
+        return _collapse(" ".join(self._parts))
+
+
+def html_to_page_text(html: str) -> tuple[str, tuple[str, ...], str]:
+    parser = PageParser()
+    parser.feed(html)
+    parser.close()
+    return parser.title, tuple(parser.headings), parser.body
+
+
+def page_material(url: str, html: str) -> DepositedMaterial:
+    title, headings, body = html_to_page_text(html)
+    blocks = [piece for piece in (title, *headings, body) if piece]
+    return DepositedMaterial(name=url, body="\n".join(blocks))
+
+
+def validate_public_http_url(url: str) -> str:
+    raw = (url or "").strip()
+    if not raw:
+        raise PresenceRejected("site URL is required")
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"}:
+        raise PresenceRejected("only http(s) site URLs are allowed")
+    if parsed.username or parsed.password:
+        raise PresenceRejected("site URL must not contain credentials")
+    host = (parsed.hostname or "").lower()
+    if not host or host == "localhost" or host.endswith(".local"):
+        raise PresenceRejected("site URL host is not a public site")
+    try:
+        parsed_ip = ipaddress.ip_address(host)
+    except ValueError:
+        parsed_ip = None
+    if parsed_ip is not None and (
+        parsed_ip.is_private
+        or parsed_ip.is_loopback
+        or parsed_ip.is_link_local
+        or parsed_ip.is_reserved
+        or parsed_ip.is_multicast
+    ):
+        raise PresenceRejected("site URL host is not a public site")
+    return raw
+
+
+def _host_is_public(host: str) -> bool:
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError as exc:
+        raise PresenceRejected("site URL host could not be resolved") from exc
+    for info in infos:
+        sockaddr = info[4]
+        if not sockaddr:
+            continue
+        try:
+            parsed_ip = ipaddress.ip_address(sockaddr[0])
+        except ValueError:
+            continue
+        if (
+            parsed_ip.is_private
+            or parsed_ip.is_loopback
+            or parsed_ip.is_link_local
+            or parsed_ip.is_reserved
+            or parsed_ip.is_multicast
+        ):
+            return False
+    return True
+
+
+class HttpPresenceSource:
+    """Fetch the owner's public site. Caller must inject this; tests do not."""
+
+    def __init__(self, opener=urlopen) -> None:
+        self._opener = opener
+
+    def load(self, seed: BusinessSeed) -> tuple[DepositedMaterial, ...]:
+        url = validate_public_http_url(seed.site_url)
+        host = urlparse(url).hostname or ""
+        if not _host_is_public(host):
+            raise PresenceRejected("site URL host is not a public site")
+        request = Request(url, headers={"User-Agent": USER_AGENT})
+        try:
+            with self._opener(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
+                final_url = getattr(response, "geturl", lambda: url)()
+                if urlparse(final_url).scheme not in {"http", "https"}:
+                    raise PresenceRejected("site redirected off http(s)")
+                body = response.read(MAX_BODY_BYTES + 1)
+        except (URLError, TimeoutError, OSError) as exc:
+            raise PresenceRejected("owner site could not be read") from exc
+        if len(body) > MAX_BODY_BYTES:
+            raise PresenceRejected("owner site is too large")
+        html = body.decode("utf-8", errors="replace")
+        return (page_material(url, html),)

@@ -8,6 +8,10 @@ This module does not find people or contact them.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from evorove_lead.offer import OfferUnderstanding
 
 
 class CandidateRejected(ValueError):
@@ -45,3 +49,24 @@ def accept_candidate(*, identity: str, reason: str, reason_source: str) -> Candi
         reason=_require("reason", reason),
         reason_source=_require("reason_source", reason_source),
     )
+
+
+def accept_candidate_for_offer(
+    *,
+    identity: str,
+    reason: str,
+    reason_source: str,
+    offer: OfferUnderstanding,
+) -> Candidate:
+    """Accept a candidate whose reason is tied to the understood offer."""
+
+    candidate = accept_candidate(
+        identity=identity,
+        reason=reason,
+        reason_source=reason_source,
+    )
+    folded_reason = candidate.reason.casefold()
+    claims = (*offer.what_we_sell, *offer.who_may_fit)
+    if not any(claim.text.casefold() in folded_reason for claim in claims):
+        raise CandidateRejected("reason is not tied to the offer")
+    return candidate

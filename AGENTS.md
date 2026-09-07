@@ -7,7 +7,8 @@
 - Cycle 1 result is a person plus a reason they belong here. Not a contact dump. Not a filled CRM card. Not a booked slot. Reject records with no reason.
 - Do not message the person. Outreach is cycle 2 in `evorove`. Do not run objections, GREET, quotes, booking, or a chat widget here.
 - Do not copy `src/`, the widget, Pulse landing, billing, sales playbook, `ProcessState`, `SalesStage`, or Docker from the sister repos. CRM was copied from the engine once and inherited the wrong product. Do not repeat that. Law is not the product. No industry forks in code.
-- Owner deposits business materials (ad copy, their site URL, service description) into `owner-materials/`. Do not scrape paywalled or third-party ads. Do not scrape Google Ads Transparency Center internals. Do not connect Bing/Google/Meta OAuth in this slice; the owner enters secrets herself later.
+- Owner deposits business materials (ad copy, their site URL, service description) into `owner-materials/`. README is not a material. Do not fetch the URL. Do not scrape paywalled or third-party ads. Do not scrape Google Ads Transparency Center internals. Do not connect Bing/Google/Meta OAuth in this slice; the owner enters secrets herself later.
+- An offer is accepted only when `what_we_sell` and `who_may_fit` already appear in deposited files. Price, discount, guarantee, and legal claims are forbidden unless the owner already wrote them. Do not copy Business DNA from `evorove`.
 - Microsoft Ad Library is public but EEA-impression-only (DSA). It is a later optional research input, not the US SMB source of truth, and not this slice.
 - AI may later analyze owner materials and phrase why a person fits. It may not invent price, discount, guarantee, or a legal claim. It may not book a slot.
 - Never run `git push`; only the owner pushes. Do not create a GitHub remote.

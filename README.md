@@ -13,12 +13,12 @@ The product north star lives in the sales sister, not here: `/Users/alenakulish/
 ## What this repo is
 
 - The home of **lead generation as a cycle**, not as a widget or an intake form.
-- A contract: a candidate is an identity we may later address **plus** a grounded reason **plus** the source of that reason. A contact with no reason is rejected.
-- A place for the owner to deposit their own business materials (ad copy, their site URL, a service description) so the offer can be understood without inventing price, discount, guarantee, or legal claims.
+- A contract: a candidate is an identity we may later address **plus** a grounded reason **plus** the source of that reason. A contact with no reason is rejected. The reason must tie to the understood offer.
+- A place for the owner to deposit their own business materials (ad copy, their site URL, a service description). An offer is accepted only if every claim already appears in those files. No deposited copy means no offer. This repo does not invent price, discount, guarantee, or legal claims, and it does not fetch the owner’s URL.
 
 ## What this repo is not
 
-- Not live customer finding. Scaffold and contract only; people search is not implemented.
+- Not live customer finding. People search is not implemented. Offer validation is not extraction and not generation.
 - Not outreach. This repo does not email, SMS, or otherwise message the person. Messaging is cycle 2.
 - Not a sales conversation, booking calendar, quote engine, or embeddable chat.
 - Not a CRM card dump and not a clone of `evorove` or `evorove-crm`.
