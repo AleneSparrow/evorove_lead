@@ -8,6 +8,7 @@ version = "0.0.0"
 description = "Cycle 1 lead generation engine: a fitting person plus a grounded reason. Not live generation."
 readme = "README.md"
 requires-python = ">=3.11"
+dependencies = ["scrapegraphai>=2.2,<3.0"]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
