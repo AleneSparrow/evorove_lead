@@ -1,6 +1,8 @@
-"""Owner-deposited business materials. Files on disk only.
+"""Named bodies of the business's own words.
 
-This module does not fetch URLs, scrape ads, or read secrets.
+Optional files on disk live here. The engine can also pass page text
+fetched from the owner's public site. This module does not scrape ads
+or read secrets.
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ class MaterialRejected(ValueError):
 
 @dataclass(frozen=True)
 class DepositedMaterial:
-    """A file the owner placed for cycle 1 to read."""
+    """A named body of the business's own words."""
 
     name: str
     body: str

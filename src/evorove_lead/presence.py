@@ -27,59 +27,6 @@ class PresenceSource(Protocol):
         """Return the business's own words, named by source."""
 
 
-class _PageParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__(convert_charrefs=True)
-        self.title = ""
-        self.headings: list[str] = []
-        self._parts: list[str] = []
-        self._skip = 0
-        self._in_title = False
-        self._heading_buf: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        lowered = tag.lower()
-        if lowered in {"script", "style", "noscript"}:
-            self._skip += 1
-            return
-        if lowered == "title":
-            self._in_title = True
-            return
-        if lowered in {"h1", "h2"} and self._skip == 0:
-            self._heading_buf = []
-
-    def handle_endtag(self, tag: str) -> None:
-        lowered = tag.lower()
-        if lowered in {"script", "style", "noscript"} and self._skip:
-            self._skip -= 1
-            return
-        if lowered == "title":
-            self._in_title = False
-            return
-        if lowered in {"h1", "h2"} and self._heading_buf:
-            heading = _collapse(" ".join(self._heading_buf))
-            if heading:
-                self.headings.append(heading)
-            self._heading_buf = []
-
-    def handle_data(self, data: str) -> None:
-        if self._skip:
-            return
-        chunk = data.strip()
-        if not chunk:
-            return
-        if self._in_title:
-            self.title = _collapse(f"{self.title} {chunk}")
-        if self._heading_buf is not None and self._heading_buf != [] or False:
-            pass
-        self._parts.append(chunk)
-        if self._heading_buf is not None:
-            # Buffer heading text only while a heading is open.
-            # handle_starttag resets the list; we append whenever the last
-            # start was a heading and it has not been closed yet.
-            pass
-
-
 def _collapse(text: str) -> str:
     return " ".join(text.split())
 
@@ -152,7 +99,8 @@ def html_to_page_text(html: str) -> tuple[str, tuple[str, ...], str]:
 
 def page_material(url: str, html: str) -> DepositedMaterial:
     title, headings, body = html_to_page_text(html)
-    blocks = [piece for piece in (title, *headings, body) if piece]
+    # Headings first so the offer reader quotes the service, not the tab title.
+    blocks = [piece for piece in (*headings, title, body) if piece]
     return DepositedMaterial(name=url, body="\n".join(blocks))
 
 
@@ -208,15 +156,16 @@ def _host_is_public(host: str) -> bool:
 
 
 class HttpPresenceSource:
-    """Fetch the owner's public site. Caller must inject this; tests do not."""
+    """Fetch the owner's public site. Tests inject a fake opener or presence."""
 
-    def __init__(self, opener=urlopen) -> None:
+    def __init__(self, opener=urlopen, host_ok=_host_is_public) -> None:
         self._opener = opener
+        self._host_ok = host_ok
 
     def load(self, seed: BusinessSeed) -> tuple[DepositedMaterial, ...]:
         url = validate_public_http_url(seed.site_url)
         host = urlparse(url).hostname or ""
-        if not _host_is_public(host):
+        if not self._host_ok(host):
             raise PresenceRejected("site URL host is not a public site")
         request = Request(url, headers={"User-Agent": USER_AGENT})
         try:

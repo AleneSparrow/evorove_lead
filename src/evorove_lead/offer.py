@@ -76,12 +76,12 @@ def accept_offer_understanding(
 ) -> OfferUnderstanding:
     """Accept a structured offer or reject invented claims.
 
-    Product invariant: no materials, no offer. No quote in the files, no
-    price, discount, guarantee, or legal claim.
+    Product invariant: no business materials, no offer. No quote in those
+    words, no price, discount, guarantee, or legal claim.
     """
 
     if not materials:
-        raise OfferRejected("owner-deposited materials are required")
+        raise OfferRejected("business materials are required")
 
     by_name = _index_materials(materials)
     sold = tuple(what_we_sell)
