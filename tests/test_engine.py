@@ -382,6 +382,52 @@ def test_engine_runs_the_full_hypothesis_pipeline_to_cold() -> None:
     assert len(crm_sink.published) == 1
 
 
+def test_engine_hypothesis_pipeline_puts_hypothesis_id_on_the_handoff_and_crm_touch() -> None:
+    """Phase 3 prerequisite: hypothesis_id must ride the handoff to Cold, not just the warehouse."""
+
+    from evorove_lead.crm_touch import RecordingLeadTouchSink
+    from evorove_lead.search import TraceFinding
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    class SingleHitHypothesisSearch:
+        connected = True
+
+        def find(self, hypothesis):
+            if hypothesis.intent_trigger.kind != "need_statement":
+                return ()
+            return (
+                TraceFinding(
+                    url="https://forum.example/thread/1",
+                    raw_text="Need weekend catering for a birthday",
+                    query_used=hypothesis.query_template,
+                    source_channel=hypothesis.channel,
+                    hit=PeopleHit(
+                        identity="jordan@example-bakery.com",
+                        observed_fact="Publicly asked for weekend catering for a birthday.",
+                        observed_source="https://forum.example/thread/1",
+                        channel="email",
+                    ),
+                ),
+            )
+
+    warehouse = RecordingAnalysisWarehouse()
+    crm_sink = RecordingLeadTouchSink()
+    result = LeadGenerationEngine(
+        presence=FakePresence(),
+        hypothesis_search=SingleHitHypothesisSearch(),
+        warehouse=warehouse,
+        lead_touch_sink=crm_sink,
+    ).generate(BusinessSeed(site_url=SITE, business_id="tenant-a"))
+
+    assert len(result.handoffs) == 1
+    hypothesis_id = result.handoffs[0].hypothesis_id
+    assert hypothesis_id
+    assert hypothesis_id in {h.id for h in warehouse.hypotheses}
+
+    _, payload = crm_sink.published[0]
+    assert payload["payload"]["hypothesis_id"] == hypothesis_id
+
+
 def test_engine_hypothesis_pipeline_reports_unconnected_search() -> None:
     from evorove_lead.warehouse import RecordingAnalysisWarehouse
 

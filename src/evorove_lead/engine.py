@@ -160,7 +160,9 @@ class LeadGenerationEngine:
                 if seed.business_id
                 else ""
             )
-            handoff = Cycle1Handoff.from_candidate(candidate, hit.channel, person_id=person_id)
+            handoff = Cycle1Handoff.from_candidate(
+                candidate, hit.channel, person_id=person_id, hypothesis_id=hypothesis_id
+            )
             handoffs.append(handoff)
             if hypothesis_id:
                 self._warehouse.save_candidate(
@@ -306,7 +308,9 @@ class LeadGenerationEngine:
                     if business_id
                     else ""
                 )
-                handoff = Cycle1Handoff.from_candidate(candidate, hit.channel, person_id=person_id)
+                handoff = Cycle1Handoff.from_candidate(
+                    candidate, hit.channel, person_id=person_id, hypothesis_id=hypothesis_id
+                )
                 handoffs.append(handoff)
                 if hypothesis_id:
                     self._warehouse.save_candidate(

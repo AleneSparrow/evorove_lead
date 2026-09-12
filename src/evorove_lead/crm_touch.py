@@ -107,5 +107,10 @@ def assembled_touch(business_id: str, candidate: Candidate, handoff: Cycle1Hando
             "reason": candidate.reason,
             "reason_source": candidate.reason_source,
             "channel": handoff.channel,
+            # Non-PII: lets phase 3's outcome event (Done/dropped in cycle
+            # 2/3) find its way back to the hypothesis in this repo's own
+            # warehouse. Empty when the bridge path (no real Hypothesis
+            # yet) produced this handoff.
+            "hypothesis_id": handoff.hypothesis_id,
         },
     }
