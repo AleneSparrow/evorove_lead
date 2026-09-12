@@ -86,6 +86,21 @@ def _next_status_and_budget(
     return "live", current_budget
 
 
+def latest_business_archetype(warehouse: AnalysisWarehouse, business_id: str) -> str:
+    """The most recently stored, owner-set archetype for this business, or "".
+
+    Briefs accumulate history (never overwritten); the archetype can also
+    change between brief snapshots if the owner corrects it, so this reads
+    the latest one rather than the first.
+    """
+
+    briefs = warehouse.list_briefs(business_id)
+    for brief in reversed(briefs):
+        if brief.business_archetype.strip():
+            return brief.business_archetype.strip()
+    return ""
+
+
 def reweight_hypotheses(
     warehouse: AnalysisWarehouse,
     business_id: str,
@@ -161,16 +176,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--archetype",
         default="",
-        help="Business archetype (e.g. 'local_service_appointment'). "
-        "When given, also folds results into the system-wide pattern library.",
+        help="Business archetype (e.g. 'local_service_appointment'). Defaults "
+        "to whatever the owner set on this business's latest brief, if any. "
+        "When one is known either way, also folds results into the "
+        "system-wide pattern library.",
     )
     args = parser.parse_args(argv)
 
+    warehouse = warehouse_from_env()
+    archetype = args.archetype.strip() or latest_business_archetype(warehouse, args.business_id)
     results = reweight_hypotheses(
-        warehouse_from_env(),
+        warehouse,
         args.business_id,
-        pattern_library=pattern_library_from_env() if args.archetype else None,
-        business_archetype=args.archetype,
+        pattern_library=pattern_library_from_env() if archetype else None,
+        business_archetype=archetype,
     )
     for result in results:
         print(

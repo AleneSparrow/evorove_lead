@@ -27,6 +27,10 @@ class BriefRecord:
     commercial_claims: tuple[dict[str, str], ...]
     must_not_promise: tuple[str, ...]
     created_at: datetime
+    # Owner-set, opaque (see BusinessSeed.business_archetype). Stored here
+    # so reweight_hypotheses.py can look it up by business_id alone,
+    # without needing the archetype re-supplied on every job run.
+    business_archetype: str = ""
 
 
 @dataclass(frozen=True)

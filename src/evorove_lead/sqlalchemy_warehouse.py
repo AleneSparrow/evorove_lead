@@ -52,6 +52,7 @@ def _brief_to_row(record: BriefRecord) -> BriefRow:
         commercial_claims=list(record.commercial_claims),
         must_not_promise=list(record.must_not_promise),
         created_at=record.created_at,
+        business_archetype=record.business_archetype,
     )
 
 
@@ -63,6 +64,7 @@ def _brief_from_row(row: BriefRow) -> BriefRecord:
         who_may_fit=tuple(row.who_may_fit or ()),
         commercial_claims=tuple(row.commercial_claims or ()),
         must_not_promise=tuple(row.must_not_promise or ()),
+        business_archetype=row.business_archetype or "",
         created_at=row.created_at,
     )
 

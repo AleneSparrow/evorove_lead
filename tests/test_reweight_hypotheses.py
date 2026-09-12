@@ -3,9 +3,11 @@ from datetime import datetime, timezone
 from evorove_lead.reweight_hypotheses import (
     MIN_SAMPLE_FOR_RATING,
     compute_rates,
+    latest_business_archetype,
     reweight_hypotheses,
 )
 from evorove_lead.warehouse import (
+    BriefRecord,
     CandidateRecord,
     HypothesisOutcomeRecord,
     HypothesisRecord,
@@ -200,6 +202,39 @@ def test_reweight_without_archetype_never_touches_pattern_library():
     reweight_hypotheses(warehouse, BIZ, pattern_library=library)
 
     assert library.observations == {}
+
+
+def _brief(business_id: str, brief_id: str, archetype: str = "") -> BriefRecord:
+    return BriefRecord(
+        id=brief_id,
+        business_id=business_id,
+        what_we_sell=(),
+        who_may_fit=(),
+        commercial_claims=(),
+        must_not_promise=(),
+        created_at=NOW,
+        business_archetype=archetype,
+    )
+
+
+def test_latest_business_archetype_is_blank_with_no_briefs():
+    assert latest_business_archetype(RecordingAnalysisWarehouse(), BIZ) == ""
+
+
+def test_latest_business_archetype_reads_most_recent_non_blank():
+    warehouse = RecordingAnalysisWarehouse()
+    warehouse.save_brief(_brief(BIZ, "brief-1", "catering"))
+    warehouse.save_brief(_brief(BIZ, "brief-2", ""))  # a later snapshot that left it blank
+    warehouse.save_brief(_brief(BIZ, "brief-3", "local_service_appointment"))
+
+    assert latest_business_archetype(warehouse, BIZ) == "local_service_appointment"
+
+
+def test_latest_business_archetype_is_tenant_scoped():
+    warehouse = RecordingAnalysisWarehouse()
+    warehouse.save_brief(_brief("tenant-b", "brief-1", "catering"))
+
+    assert latest_business_archetype(warehouse, BIZ) == ""
 
 
 def test_reweight_is_tenant_scoped():

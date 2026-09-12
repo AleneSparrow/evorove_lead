@@ -15,6 +15,7 @@ from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, build_hypotheses, verify_hypothesis
 from evorove_lead.offer import OfferRejected, OfferUnderstanding
 from evorove_lead.offer_reader import read_offer
+from evorove_lead.pattern_library import PatternLibrary
 from evorove_lead.policy import LeadGenerationPolicy
 from evorove_lead.presence import PresenceRejected, PresenceSource
 from evorove_lead.crm_touch import LeadTouchSink, assembled_touch, sink_from_env, stable_person_id, split_identity
@@ -25,6 +26,7 @@ from evorove_lead.search import (
     TraceFinding,
     UnconnectedPeopleSearch,
 )
+from evorove_lead.sqlalchemy_pattern_library import pattern_library_from_env
 from evorove_lead.sqlalchemy_warehouse import warehouse_from_env
 from evorove_lead.warehouse import (
     AnalysisWarehouse,
@@ -76,6 +78,7 @@ class LeadGenerationEngine:
         warehouse: AnalysisWarehouse | None = None,
         hypothesis_search: HypothesisPeopleSearch | None = None,
         geo_radius: GeoRadius | None = None,
+        pattern_library: PatternLibrary | None = None,
     ) -> None:
         self._presence = presence
         self._people_search = people_search or UnconnectedPeopleSearch()
@@ -91,6 +94,9 @@ class LeadGenerationEngine:
         # brief automatically is not built yet -- callers pass it in; an
         # unset radius means "whole US market", not a silent narrowing.
         self._geo_radius = geo_radius or GeoRadius()
+        # Phase 4: system-wide, non-tenant. Only ever consulted when
+        # `seed.business_archetype` is set -- the engine never invents one.
+        self._pattern_library = pattern_library if pattern_library is not None else pattern_library_from_env()
 
     def generate(self, seed: BusinessSeed) -> GenerationResult:
         empty = GenerationResult(
@@ -200,7 +206,9 @@ class LeadGenerationEngine:
             return ""
         now = datetime.now(timezone.utc)
         brief_id = new_id("brief")
-        self._warehouse.save_brief(_brief_record(brief_id, seed.business_id, offer, now))
+        self._warehouse.save_brief(
+            _brief_record(brief_id, seed.business_id, offer, now, seed.business_archetype)
+        )
         hypothesis_id = new_id("hypothesis")
         self._warehouse.save_hypothesis(
             HypothesisRecord(
@@ -244,7 +252,9 @@ class LeadGenerationEngine:
         now = datetime.now(timezone.utc)
         brief_id = new_id("brief") if business_id else ""
         if business_id:
-            self._warehouse.save_brief(_brief_record(brief_id, business_id, offer, now))
+            self._warehouse.save_brief(
+                _brief_record(brief_id, business_id, offer, now, seed.business_archetype)
+            )
 
         accepted: list[Candidate] = []
         handoffs: list[Cycle1Handoff] = []
@@ -253,7 +263,13 @@ class LeadGenerationEngine:
         # person addressed once, not once per hypothesis that noticed them
         # (contract: "его ещё нет на доске... с тем же контактом").
         seen_identities: set[str] = set()
-        for hypothesis in build_hypotheses(offer, self._geo_radius):
+        hypotheses = build_hypotheses(
+            offer,
+            self._geo_radius,
+            pattern_library=self._pattern_library,
+            business_archetype=seed.business_archetype,
+        )
+        for hypothesis in hypotheses:
             hypothesis_id = new_id("hypothesis") if business_id else ""
             findings = tuple(self._hypothesis_search.find(hypothesis))
             verified = verify_hypothesis(
@@ -350,7 +366,13 @@ class _StaticProbe:
         return self._hits
 
 
-def _brief_record(brief_id: str, business_id: str, offer: OfferUnderstanding, now: datetime) -> BriefRecord:
+def _brief_record(
+    brief_id: str,
+    business_id: str,
+    offer: OfferUnderstanding,
+    now: datetime,
+    business_archetype: str = "",
+) -> BriefRecord:
     return BriefRecord(
         id=brief_id,
         business_id=business_id,
@@ -366,6 +388,7 @@ def _brief_record(brief_id: str, business_id: str, offer: OfferUnderstanding, no
         ),
         must_not_promise=offer.must_not_promise,
         created_at=now,
+        business_archetype=business_archetype,
     )
 
 

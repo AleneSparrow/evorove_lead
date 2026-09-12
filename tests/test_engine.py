@@ -428,6 +428,45 @@ def test_engine_hypothesis_pipeline_puts_hypothesis_id_on_the_handoff_and_crm_to
     assert payload["payload"]["hypothesis_id"] == hypothesis_id
 
 
+def test_engine_persists_business_archetype_on_the_brief_and_reorders_by_pattern() -> None:
+    from evorove_lead.pattern_library import RecordingPatternLibrary
+    from evorove_lead.search import TraceFinding
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    class NoHitHypothesisSearch:
+        connected = True
+
+        def __init__(self) -> None:
+            self.queries_in_order: list[str] = []
+
+        def find(self, hypothesis):
+            self.queries_in_order.append(hypothesis.intent_trigger.kind)
+            return ()
+
+    library = RecordingPatternLibrary()
+    library.record_observation(
+        business_archetype="bakery",
+        channel_family="web_search",
+        query_pattern="public_ask",
+        close_rate=0.9,
+        sample_size=10,
+    )
+    warehouse = RecordingAnalysisWarehouse()
+    search = NoHitHypothesisSearch()
+    seed = BusinessSeed(site_url=SITE, business_id="tenant-a", business_archetype="bakery")
+
+    LeadGenerationEngine(
+        presence=FakePresence(),
+        hypothesis_search=search,
+        warehouse=warehouse,
+        pattern_library=library,
+    ).generate(seed)
+
+    assert warehouse.briefs[0].business_archetype == "bakery"
+    # public_ask has a known "high" pattern for this archetype -> probed first.
+    assert search.queries_in_order[0] == "public_ask"
+
+
 def test_engine_hypothesis_pipeline_reports_unconnected_search() -> None:
     from evorove_lead.warehouse import RecordingAnalysisWarehouse
 

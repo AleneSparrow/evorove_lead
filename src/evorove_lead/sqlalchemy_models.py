@@ -44,6 +44,7 @@ class BriefRow(Base):
     commercial_claims = Column(JSON_VALUE, nullable=False)
     must_not_promise = Column(JSON_VALUE, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False)
+    business_archetype = Column(String(128), nullable=False, default="")
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_briefs_business_id_id"),
