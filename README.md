@@ -32,4 +32,14 @@ POSTed to CRM Cold. `BusinessSeed.business_id` must be the CRM tenant id, and
 the person must already have a phone or email. Failures are swallowed so search
 is not blocked.
 
+## Outcome feedback (inbound)
+
+`api.py` (`uvicorn evorove_lead.api:app`) is this repo's only network-facing
+code: `POST /api/v1/internal/hypothesis-outcomes`, behind the same
+`INTERNAL_TASK_SECRET`. Cycle 2/3 report `hypothesis_id -> outcome`
+(`done` / `dropped` / `offer_made` / `in_progress`) when a case closes or
+drops -- no name, contact, or message text; the request schema has no field
+for one. Feeds the warehouse's `hypothesis_outcomes` table for a future
+reweighting job, not `LeadGenerationEngine` itself.
+
 Owner-facing contract (Russian): [`docs/cycle-1-contract.md`](docs/cycle-1-contract.md).
