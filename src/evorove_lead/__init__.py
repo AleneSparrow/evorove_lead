@@ -19,6 +19,15 @@ from evorove_lead.engine import (
     RejectedHit,
 )
 from evorove_lead.handoff import Cycle1Handoff
+from evorove_lead.hypothesis import (
+    GeoRadius,
+    Hypothesis,
+    HypothesisProbe,
+    IntentTrigger,
+    build_hypotheses,
+    prioritize_hypotheses,
+    verify_hypothesis,
+)
 from evorove_lead.materials import DepositedMaterial, MaterialRejected, load_deposited_materials
 from evorove_lead.observations import (
     ObservationRejected,
@@ -48,8 +57,12 @@ __all__ = [
     "DepositedMaterial",
     "GenerationResult",
     "GenerationStatus",
+    "GeoRadius",
     "GroundedClaim",
     "HttpPresenceSource",
+    "Hypothesis",
+    "HypothesisProbe",
+    "IntentTrigger",
     "LeadGenerationEngine",
     "LeadGenerationPolicy",
     "MaterialRejected",
@@ -64,8 +77,11 @@ __all__ = [
     "accept_candidate",
     "accept_candidate_for_offer",
     "accept_offer_understanding",
+    "build_hypotheses",
     "load_deposited_materials",
     "load_owner_observations",
     "page_material",
+    "prioritize_hypotheses",
     "read_offer",
+    "verify_hypothesis",
 ]
