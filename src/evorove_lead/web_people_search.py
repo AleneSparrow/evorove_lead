@@ -24,6 +24,22 @@ _KEYWORD_RE = re.compile(r"[A-Za-z]{4,}")
 _STOPWORDS = frozenset({"near", "need", "looking", "for", "with"})
 PAGE_TEXT_EXCERPT_CHARS = 280
 
+# Deliberately strict: a plain 7-15 digit run (like observations.py's
+# owner-deposited-JSONL parser uses) is far too noisy over a whole page --
+# ZIP+4, prices, dates, and IDs all look like phone numbers under that
+# rule. This requires actual phone punctuation (parens/space/dot/dash)
+# between each group, which a "94105-1234" ZIP+4 or a "$1,234.5678"
+# price does not have.
+_STRICT_PHONE_RE = re.compile(r"(?<!\d)\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)")
+
+
+def _extract_phone(text: str) -> str | None:
+    match = _STRICT_PHONE_RE.search(text)
+    if match is None:
+        return None
+    digits = "".join(character for character in match.group(0) if character.isdigit())
+    return digits if len(digits) == 10 else None
+
 
 def _keywords(query_template: str) -> tuple[str, ...]:
     words = {w.casefold() for w in _KEYWORD_RE.findall(query_template)}
@@ -48,10 +64,11 @@ def _on_topic(hypothesis: "Hypothesis", snippet: str) -> bool:
 class WebSearchPeopleSearch:
     """Real connector: one search client, per-hypothesis queries, our own parsing.
 
-    Phone extraction from raw page bodies is deliberately not attempted --
-    scanning a whole page for digit runs is too noisy (dates, prices, zip
-    codes all look like phone numbers). Only an email counts as an address
-    for this first connector; a stricter phone pattern is future work.
+    Email is checked first and wins if both are on the page (email
+    addressing this specific person is a stronger signal than a phone
+    number that might be the business's own front desk). Phone only
+    counts when it matches the strict, punctuated pattern in
+    `_STRICT_PHONE_RE` -- a bare digit run is not enough.
     """
 
     def __init__(self, client: WebSearchClient, page_fetcher=fetch_page_text) -> None:
@@ -86,19 +103,28 @@ class WebSearchPeopleSearch:
         except PresenceRejected as exc:
             return TraceFinding(**base, reject_reason=str(exc))
 
-        match = EMAIL_RE.search(page_text)
-        if match is None:
-            return TraceFinding(
-                **{**base, "raw_text": search_hit.snippet or page_text[:PAGE_TEXT_EXCERPT_CHARS]},
-                reject_reason="no email address found on the page",
-            )
-
-        email = match.group(0).casefold()
         excerpt = (search_hit.snippet or page_text[:PAGE_TEXT_EXCERPT_CHARS]).strip()
-        hit = PeopleHit(
-            identity=email,
-            observed_fact=excerpt,
-            observed_source=search_hit.url,
-            channel="email",
+        email_match = EMAIL_RE.search(page_text)
+        if email_match is not None:
+            hit = PeopleHit(
+                identity=email_match.group(0).casefold(),
+                observed_fact=excerpt,
+                observed_source=search_hit.url,
+                channel="email",
+            )
+            return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit)
+
+        phone = _extract_phone(page_text)
+        if phone is not None:
+            hit = PeopleHit(
+                identity=phone,
+                observed_fact=excerpt,
+                observed_source=search_hit.url,
+                channel="sms",
+            )
+            return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit)
+
+        return TraceFinding(
+            **{**base, "raw_text": excerpt},
+            reject_reason="no email or phone found on the page",
         )
-        return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit)

@@ -86,7 +86,7 @@ def test_connector_rejects_when_page_fetch_fails():
     assert findings[0].reject_reason == "no such page"
 
 
-def test_connector_rejects_when_no_email_on_page():
+def test_connector_rejects_when_no_email_or_phone_on_page():
     hypothesis = _hypothesis('"need Weekend catering" near Austin')
     client = FakeClient(
         (SearchHit(url="https://forum.example/1", snippet="Need weekend catering ASAP"),)
@@ -98,7 +98,60 @@ def test_connector_rejects_when_no_email_on_page():
     findings = connector.find(hypothesis)
 
     assert findings[0].hit is None
-    assert findings[0].reject_reason == "no email address found on the page"
+    assert findings[0].reject_reason == "no email or phone found on the page"
+
+
+def test_connector_falls_back_to_a_strictly_formatted_phone_number():
+    hypothesis = _hypothesis('"need Weekend catering" near Austin')
+    client = FakeClient(
+        (SearchHit(url="https://forum.example/1", snippet="Need weekend catering ASAP"),)
+    )
+    connector = WebSearchPeopleSearch(
+        client,
+        page_fetcher=_fetcher({"https://forum.example/1": "call me at (415) 555-0134 anytime"}),
+    )
+
+    findings = connector.find(hypothesis)
+
+    assert findings[0].hit is not None
+    assert findings[0].hit.identity == "4155550134"
+    assert findings[0].hit.channel == "sms"
+
+
+def test_connector_ignores_zip_plus_four_and_prices_as_phone_numbers():
+    hypothesis = _hypothesis('"need Weekend catering" near Austin')
+    client = FakeClient(
+        (SearchHit(url="https://forum.example/1", snippet="Need weekend catering ASAP"),)
+    )
+    connector = WebSearchPeopleSearch(
+        client,
+        page_fetcher=_fetcher(
+            {"https://forum.example/1": "Ship to 94105-1234, total $1,234.5678 due"}
+        ),
+    )
+
+    findings = connector.find(hypothesis)
+
+    assert findings[0].hit is None
+    assert findings[0].reject_reason == "no email or phone found on the page"
+
+
+def test_connector_prefers_email_over_phone_when_both_present():
+    hypothesis = _hypothesis('"need Weekend catering" near Austin')
+    client = FakeClient(
+        (SearchHit(url="https://forum.example/1", snippet="Need weekend catering ASAP"),)
+    )
+    connector = WebSearchPeopleSearch(
+        client,
+        page_fetcher=_fetcher(
+            {"https://forum.example/1": "email jane@example.com or call 415-555-0134"}
+        ),
+    )
+
+    findings = connector.find(hypothesis)
+
+    assert findings[0].hit.channel == "email"
+    assert findings[0].hit.identity == "jane@example.com"
 
 
 def test_connector_rejects_non_public_result_url_without_fetching():
