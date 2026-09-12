@@ -7,7 +7,7 @@ dist/
 build/
 
 .env
-.env.*
+.env.bak*
 
 .venv/
 venv/

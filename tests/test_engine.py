@@ -233,3 +233,82 @@ def test_sink_from_env_needs_url_and_secret(monkeypatch) -> None:
     monkeypatch.setenv("CRM_BASE_URL", "http://crm.example")
     monkeypatch.setenv("INTERNAL_TASK_SECRET", "local_development_only")
     assert isinstance(sink_from_env(), HttpCrmLeadTouchSink)
+
+
+def test_engine_writes_traces_and_rejections_to_its_own_warehouse_not_crm() -> None:
+    """Phase 0 done-when: engine.py writes raw traces/rejections without going to CRM."""
+
+    from evorove_lead.crm_touch import RecordingLeadTouchSink
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    search = FakePeopleSearch(
+        (
+            PeopleHit(
+                identity="Jordan Lee, jordan@example-bakery.com",
+                observed_fact="Already advertises weekend catering to nearby families.",
+                observed_source="https://directory.example/jordan",
+                channel="email",
+            ),
+            PeopleHit(
+                identity="555-0100",
+                observed_fact="Has a phone number in a purchased list.",
+                observed_source="phone dump",
+            ),
+        )
+    )
+    warehouse = RecordingAnalysisWarehouse()
+    crm_sink = RecordingLeadTouchSink()
+    seed = BusinessSeed(site_url=SITE, business_id="tenant-a")
+    result = LeadGenerationEngine(
+        presence=FakePresence(),
+        people_search=search,
+        warehouse=warehouse,
+        lead_touch_sink=crm_sink,
+    ).generate(seed)
+
+    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert len(warehouse.briefs) == 1
+    assert warehouse.briefs[0].business_id == "tenant-a"
+    assert len(warehouse.hypotheses) == 1
+    hypothesis_id = warehouse.hypotheses[0].id
+    assert len(warehouse.traces) == 2
+    assert {t.hypothesis_id for t in warehouse.traces} == {hypothesis_id}
+    decisions = {c.decision for c in warehouse.candidates}
+    assert decisions == {"cold", "rejected"}
+    # CRM only ever hears about the accepted person, never the rejected one
+    # or the raw trace text -- that stays in this repo's own warehouse.
+    assert len(crm_sink.published) == 1
+
+
+def test_engine_without_business_id_writes_nothing_to_warehouse() -> None:
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    search = FakePeopleSearch(
+        (
+            PeopleHit(
+                identity="Jordan Lee, jordan@example-bakery.com",
+                observed_fact="Already advertises weekend catering to nearby families.",
+                observed_source="https://directory.example/jordan",
+                channel="email",
+            ),
+        )
+    )
+    warehouse = RecordingAnalysisWarehouse()
+
+    result = LeadGenerationEngine(
+        presence=FakePresence(), people_search=search, warehouse=warehouse
+    ).generate(SEED)
+
+    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert warehouse.briefs == []
+    assert warehouse.traces == []
+
+
+def test_warehouse_from_env_needs_database_url(monkeypatch) -> None:
+    from evorove_lead.sqlalchemy_warehouse import SqlAlchemyAnalysisWarehouse, warehouse_from_env
+    from evorove_lead.warehouse import NullAnalysisWarehouse
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert isinstance(warehouse_from_env(), NullAnalysisWarehouse)
+    monkeypatch.setenv("DATABASE_URL", "sqlite+pysqlite:///:memory:")
+    assert isinstance(warehouse_from_env(), SqlAlchemyAnalysisWarehouse)

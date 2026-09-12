@@ -1,0 +1,21 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-evorove_lead}
+      POSTGRES_USER: ${POSTGRES_USER:-evorove_lead}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_development_only}
+    ports:
+      # 5433 is evorove-crm, 5434 is evorove; this warehouse gets its own port
+      # and its own database -- never the CRM board, never the sales database.
+      - "${POSTGRES_PORT:-5435}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres_data:
