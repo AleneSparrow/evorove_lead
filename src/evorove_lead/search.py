@@ -35,3 +35,7 @@ class UnconnectedPeopleSearch:
 
     def find(self, offer: OfferUnderstanding) -> Sequence[PeopleHit]:
         raise RuntimeError("people search is not connected")
+
+
+# Connected implementation lives in observations.py: OwnerObservationPeopleSearch
+# reads owner-deposited JSONL. It is not a live web directory.

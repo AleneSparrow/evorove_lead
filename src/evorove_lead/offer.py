@@ -21,7 +21,7 @@ class OfferRejected(ValueError):
 
 @dataclass(frozen=True)
 class GroundedClaim:
-    """A statement that must already appear in a named deposited file."""
+    """A statement that must already appear in named business materials."""
 
     text: str
     source_name: str

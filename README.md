@@ -2,36 +2,34 @@
 
 Cycle 1 of one product, not a standalone lead factory.
 
-Evorove is three sequential loops in three repositories:
+Evorove is three sequential loops in three repositories. The owner’s evening screen is a **four-tab CRM** (Cold, In progress, Offer made, Done):
 
-1. **This repo** (`evorove_lead`) — see the business, understand the offer, find a fitting person **with a reason**.
-2. **`evorove`** (sister: sale) — write to that person and sell until they are ready to book.
-3. **`evorove-crm`** — collect what the service needs and put a specific hour on the calendar.
+1. **This repo** (`evorove_lead`) — analyze the client (their site is a **brief**, not a lead list), search the **open web**, re-analyze, put a fitting person **with a reason** on **Cold**.
+2. **`evorove`** — write cold and sell (In progress / Offer made).
+3. **`evorove-crm`** — the board plus close: sale completed or an appointment if the service is offline (**Done**).
 
 The product north star lives in the sales sister, not here: `/Users/alenakulish/dev/evorove/FOUNDATION.md`.
 
 ## What this repo is
 
-- `LeadGenerationEngine`: public site URL in → grounded offer → people who fit, each with a reason.
-- A candidate is an identity we may later address **plus** a grounded reason **plus** the source of that reason. A contact with no reason is dropped. The engine does not stamp the offer onto a phone number to make it “fit.”
-- The owner points at **their** site. They do not have to paste ad copy. The engine reads that page. It does not invent price, discount, guarantee, or legal claims.
+- `LeadGenerationEngine` should: understand who to look for → parse open-web data → keep people who fit, each with a reason → hand them to CRM Cold.
+- A candidate is an identity we may later address **plus** a grounded reason **plus** the source of that reason. A contact with no reason is dropped.
+- The owner’s site is input to the **brief**. It is not where leads come from.
 
 ## What this repo is not
 
-- Not live customer finding in production. People search is a port; no directory is connected here yet (no LinkedIn scrape, no ads OAuth).
-- Not outreach. This repo does not email, SMS, or otherwise message the person. Messaging is cycle 2.
+- Not live open-web finding in production. The default people source is unconnected. Owner-deposited JSONL is a stub, not the product.
+- Not outreach. Messaging is cycle 2.
 - Not a sales conversation, booking calendar, quote engine, or embeddable chat.
-- Not a CRM card dump and not a clone of `evorove` or `evorove-crm`.
 
-## Handoff to `evorove`
+## Handoff
 
-When the engine keeps a candidate, it prepares for cycle 2:
+Cold person + reason + source + channel. That object does not send a message.
+Cycle 2 owns the first write. CRM holds Cold through Done.
 
-- who we may address,
-- why they belong here,
-- where that reason came from,
-- a channel cycle 2 may later use to write.
-
-That object does not send. Cycle 2 owns the first message. Cycle 3 owns the hour. There is no integration between the three repos yet.
+When `CRM_BASE_URL` and `INTERNAL_TASK_SECRET` are set, assembled people are
+POSTed to CRM Cold. `BusinessSeed.business_id` must be the CRM tenant id, and
+the person must already have a phone or email. Failures are swallowed so search
+is not blocked.
 
 Owner-facing contract (Russian): [`docs/cycle-1-contract.md`](docs/cycle-1-contract.md).

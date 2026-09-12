@@ -23,12 +23,14 @@ class Cycle1Handoff:
     reason: str
     reason_source: str
     channel: str
+    person_id: str = ""
 
     @classmethod
-    def from_candidate(cls, candidate: Candidate, channel: str = "") -> Cycle1Handoff:
+    def from_candidate(cls, candidate: Candidate, channel: str = "", person_id: str = "") -> Cycle1Handoff:
         return cls(
             identity=candidate.identity,
             reason=candidate.reason,
             reason_source=candidate.reason_source,
             channel=infer_channel(candidate.identity, channel),
+            person_id=person_id,
         )

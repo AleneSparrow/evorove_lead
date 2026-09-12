@@ -15,6 +15,7 @@ from evorove_lead.offer import OfferRejected, OfferUnderstanding
 from evorove_lead.offer_reader import read_offer
 from evorove_lead.policy import LeadGenerationPolicy
 from evorove_lead.presence import PresenceRejected, PresenceSource
+from evorove_lead.crm_touch import LeadTouchSink, assembled_touch, sink_from_env, stable_person_id, split_identity
 from evorove_lead.search import PeopleHit, PeopleSearch, UnconnectedPeopleSearch
 
 
@@ -53,10 +54,12 @@ class LeadGenerationEngine:
         presence: PresenceSource,
         people_search: PeopleSearch | None = None,
         policy: LeadGenerationPolicy | None = None,
+        lead_touch_sink: LeadTouchSink | None = None,
     ) -> None:
         self._presence = presence
         self._people_search = people_search or UnconnectedPeopleSearch()
         self._policy = policy or LeadGenerationPolicy()
+        self._lead_touch_sink = lead_touch_sink if lead_touch_sink is not None else sink_from_env()
 
     def generate(self, seed: BusinessSeed) -> GenerationResult:
         empty = GenerationResult(
@@ -107,7 +110,19 @@ class LeadGenerationEngine:
                 rejected.append(RejectedHit(identity=hit.identity, why=str(exc)))
                 continue
             accepted.append(candidate)
-            handoffs.append(Cycle1Handoff.from_candidate(candidate, hit.channel))
+            name, phone, email = split_identity(candidate.identity)
+            person_id = (
+                stable_person_id(seed.business_id, phone=phone, email=email, identity=candidate.identity)
+                if seed.business_id
+                else ""
+            )
+            handoff = Cycle1Handoff.from_candidate(candidate, hit.channel, person_id=person_id)
+            handoffs.append(handoff)
+            if seed.business_id and (phone or email):
+                self._lead_touch_sink.publish(
+                    seed.business_id,
+                    assembled_touch(seed.business_id, candidate, handoff),
+                )
 
         status = (
             GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT

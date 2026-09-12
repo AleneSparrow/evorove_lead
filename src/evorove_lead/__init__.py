@@ -1,7 +1,8 @@
 """Cycle 1 domain: grounded offer, then a person plus a reason.
 
 This package does not send messages or book time. People search is a
-port; the default source is unconnected.
+port; the default source is unconnected. Owner-deposited observations
+are a connected source without a live web directory.
 """
 
 from evorove_lead.business import BusinessSeed
@@ -19,6 +20,11 @@ from evorove_lead.engine import (
 )
 from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.materials import DepositedMaterial, MaterialRejected, load_deposited_materials
+from evorove_lead.observations import (
+    ObservationRejected,
+    OwnerObservationPeopleSearch,
+    load_owner_observations,
+)
 from evorove_lead.offer import (
     COMMERCIAL_KINDS,
     CommercialClaim,
@@ -47,8 +53,10 @@ __all__ = [
     "LeadGenerationEngine",
     "LeadGenerationPolicy",
     "MaterialRejected",
+    "ObservationRejected",
     "OfferRejected",
     "OfferUnderstanding",
+    "OwnerObservationPeopleSearch",
     "PeopleHit",
     "PresenceRejected",
     "RejectedHit",
@@ -57,6 +65,7 @@ __all__ = [
     "accept_candidate_for_offer",
     "accept_offer_understanding",
     "load_deposited_materials",
+    "load_owner_observations",
     "page_material",
     "read_offer",
 ]

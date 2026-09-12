@@ -1,5 +1,6 @@
 from evorove_lead.business import BusinessSeed
 from evorove_lead.engine import GenerationStatus, LeadGenerationEngine
+from evorove_lead.observations import OwnerObservationPeopleSearch
 from evorove_lead.presence import page_material
 from evorove_lead.search import PeopleHit, UnconnectedPeopleSearch
 
@@ -137,3 +138,98 @@ def test_empty_connected_search_is_no_fit_not_a_contact_list() -> None:
     assert result.status is GenerationStatus.NO_FIT
     assert result.candidates == ()
     assert result.offer is not None
+
+
+def test_owner_observations_keep_reasoned_people_and_reject_dumps(
+    tmp_path,
+) -> None:
+    (tmp_path / "people.jsonl").write_text(
+        "\n".join(
+            [
+                (
+                    '{"name":"Jordan Lee","email":"jordan@example-bakery.com",'
+                    '"observed_fact":"Already advertises weekend catering to nearby families.",'
+                    '"observed_source":"owner-copied public post, 2026-09-01",'
+                    '"channel":"email"}'
+                ),
+                (
+                    '{"name":"Pat Dump","phone":"+15550100999",'
+                    '"observed_fact":"Has a phone number in a purchased list.",'
+                    '"observed_source":"phone dump","channel":"sms"}'
+                ),
+                (
+                    '{"phone":"+15550100111","observed_fact":"",'
+                    '"observed_source":"phone dump","channel":"sms"}'
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    search = OwnerObservationPeopleSearch(tmp_path)
+    engine = LeadGenerationEngine(presence=FakePresence(), people_search=search)
+
+    result = engine.generate(SEED)
+
+    assert search.connected is True
+    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert result.sent_messages == ()
+    assert len(result.candidates) == 1
+    assert result.candidates[0].identity.startswith("Jordan Lee")
+    assert result.handoffs[0].channel == "email"
+    assert result.handoffs[0].reason_source == "owner-copied public post, 2026-09-01"
+    assert [hit.identity for hit in result.rejected] == ["Pat Dump, +15550100999"]
+
+
+def test_empty_owner_observations_are_no_fit_not_a_web_directory(
+    tmp_path,
+) -> None:
+    search = OwnerObservationPeopleSearch(tmp_path)
+    result = _engine(search).generate(SEED)
+
+    assert search.connected is True
+    assert result.status is GenerationStatus.NO_FIT
+    assert result.candidates == ()
+    assert result.sent_messages == ()
+    assert result.offer is not None
+
+
+def test_engine_reports_assembled_people_to_crm_sink() -> None:
+    from evorove_lead.crm_touch import RecordingLeadTouchSink
+    from evorove_lead.business import BusinessSeed
+
+    search = FakePeopleSearch(
+        (
+            PeopleHit(
+                identity="Jordan Lee, jordan@example-bakery.com",
+                observed_fact="Already advertises weekend catering to nearby families.",
+                observed_source="https://directory.example/jordan",
+                channel="email",
+            ),
+        )
+    )
+    sink = RecordingLeadTouchSink()
+    seed = BusinessSeed(site_url=SITE, business_id="tenant-a")
+    result = LeadGenerationEngine(
+        presence=FakePresence(), people_search=search, lead_touch_sink=sink
+    ).generate(seed)
+
+    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert len(sink.published) == 1
+    business_id, payload = sink.published[0]
+    assert business_id == "tenant-a"
+    assert payload["kind"] == "assembled"
+    assert payload["cycle"] == 1
+    assert str(payload["person_id"]).startswith("ppl_")
+    assert result.handoffs[0].person_id == payload["person_id"]
+
+
+def test_sink_from_env_needs_url_and_secret(monkeypatch) -> None:
+    from evorove_lead.crm_touch import HttpCrmLeadTouchSink, NullLeadTouchSink, sink_from_env
+
+    monkeypatch.delenv("CRM_BASE_URL", raising=False)
+    monkeypatch.delenv("INTERNAL_TASK_SECRET", raising=False)
+    assert isinstance(sink_from_env(), NullLeadTouchSink)
+    monkeypatch.setenv("CRM_BASE_URL", "http://crm.example")
+    monkeypatch.setenv("INTERNAL_TASK_SECRET", "local_development_only")
+    assert isinstance(sink_from_env(), HttpCrmLeadTouchSink)
