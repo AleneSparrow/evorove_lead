@@ -304,6 +304,102 @@ def test_engine_without_business_id_writes_nothing_to_warehouse() -> None:
     assert warehouse.traces == []
 
 
+def test_engine_runs_the_full_hypothesis_pipeline_to_cold() -> None:
+    """Phase 2 done-when: hypothesis -> query -> trace -> re-analysis -> Cold."""
+
+    from evorove_lead.crm_touch import RecordingLeadTouchSink
+    from evorove_lead.search import TraceFinding
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    class FakeHypothesisSearch:
+        connected = True
+
+        def __init__(self) -> None:
+            self.queries: list[str] = []
+
+        def find(self, hypothesis):
+            self.queries.append(hypothesis.query_template)
+            if hypothesis.intent_trigger.kind != "need_statement":
+                return (
+                    TraceFinding(
+                        url="https://forum.example/off-topic",
+                        raw_text="unrelated chatter",
+                        query_used=hypothesis.query_template,
+                        source_channel=hypothesis.channel,
+                        reject_reason="not about the hypothesis's audience or service",
+                    ),
+                )
+            return (
+                TraceFinding(
+                    url="https://forum.example/thread/1",
+                    raw_text="Need weekend catering for a birthday",
+                    query_used=hypothesis.query_template,
+                    source_channel=hypothesis.channel,
+                    hit=PeopleHit(
+                        identity="jordan@example-bakery.com",
+                        observed_fact="Publicly asked for weekend catering for a birthday.",
+                        observed_source="https://forum.example/thread/1",
+                        channel="email",
+                    ),
+                ),
+                TraceFinding(
+                    url="https://forum.example/no-contact",
+                    raw_text="Need weekend catering too but no way to reach them",
+                    query_used=hypothesis.query_template,
+                    source_channel=hypothesis.channel,
+                    reject_reason="no email address found on the page",
+                ),
+            )
+
+    search = FakeHypothesisSearch()
+    warehouse = RecordingAnalysisWarehouse()
+    crm_sink = RecordingLeadTouchSink()
+    seed = BusinessSeed(site_url=SITE, business_id="tenant-a")
+
+    result = LeadGenerationEngine(
+        presence=FakePresence(),
+        hypothesis_search=search,
+        warehouse=warehouse,
+        lead_touch_sink=crm_sink,
+    ).generate(seed)
+
+    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert len(result.candidates) == 1
+    assert result.candidates[0].identity == "jordan@example-bakery.com"
+    assert result.handoffs[0].reason_source == "https://forum.example/thread/1"
+
+    # One brief snapshot, one hypothesis row per built hypothesis (2
+    # demographic audiences + public_ask + need_statement = 4), every raw
+    # trace recorded regardless of fate.
+    assert len(warehouse.briefs) == 1
+    assert len(warehouse.hypotheses) == 4
+    assert len(warehouse.traces) == 5
+    reject_reasons = {t.reason for t in warehouse.rejected_traces}
+    assert "no email address found on the page" in reject_reasons
+    assert any("not about" in r for r in reject_reasons)
+    decisions = {c.decision for c in warehouse.candidates}
+    assert decisions == {"cold"}
+    assert len(crm_sink.published) == 1
+
+
+def test_engine_hypothesis_pipeline_reports_unconnected_search() -> None:
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    class DisconnectedHypothesisSearch:
+        connected = False
+
+        def find(self, hypothesis):
+            raise AssertionError("must not be called when disconnected")
+
+    result = LeadGenerationEngine(
+        presence=FakePresence(),
+        hypothesis_search=DisconnectedHypothesisSearch(),
+        warehouse=RecordingAnalysisWarehouse(),
+    ).generate(BusinessSeed(site_url=SITE, business_id="tenant-a"))
+
+    assert result.status is GenerationStatus.SEARCH_UNCONNECTED
+
+
 def test_warehouse_from_env_needs_database_url(monkeypatch) -> None:
     from evorove_lead.sqlalchemy_warehouse import SqlAlchemyAnalysisWarehouse, warehouse_from_env
     from evorove_lead.warehouse import NullAnalysisWarehouse

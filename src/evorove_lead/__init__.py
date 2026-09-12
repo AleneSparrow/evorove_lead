@@ -45,7 +45,20 @@ from evorove_lead.offer import (
 from evorove_lead.offer_reader import read_offer
 from evorove_lead.policy import LeadGenerationPolicy
 from evorove_lead.presence import HttpPresenceSource, PresenceRejected, page_material
-from evorove_lead.search import PeopleHit, UnconnectedPeopleSearch
+from evorove_lead.search import (
+    HypothesisPeopleSearch,
+    PeopleHit,
+    TraceFinding,
+    UnconnectedPeopleSearch,
+)
+from evorove_lead.web_people_search import WebSearchPeopleSearch
+from evorove_lead.web_search import (
+    HttpSearxngWebSearchClient,
+    SearchHit,
+    WebSearchClient,
+    client_from_env as web_search_client_from_env,
+    fetch_page_text,
+)
 
 __all__ = [
     "COMMERCIAL_KINDS",
@@ -60,7 +73,9 @@ __all__ = [
     "GeoRadius",
     "GroundedClaim",
     "HttpPresenceSource",
+    "HttpSearxngWebSearchClient",
     "Hypothesis",
+    "HypothesisPeopleSearch",
     "HypothesisProbe",
     "IntentTrigger",
     "LeadGenerationEngine",
@@ -73,15 +88,21 @@ __all__ = [
     "PeopleHit",
     "PresenceRejected",
     "RejectedHit",
+    "SearchHit",
+    "TraceFinding",
     "UnconnectedPeopleSearch",
+    "WebSearchClient",
+    "WebSearchPeopleSearch",
     "accept_candidate",
     "accept_candidate_for_offer",
     "accept_offer_understanding",
     "build_hypotheses",
+    "fetch_page_text",
     "load_deposited_materials",
     "load_owner_observations",
     "page_material",
     "prioritize_hypotheses",
     "read_offer",
     "verify_hypothesis",
+    "web_search_client_from_env",
 ]

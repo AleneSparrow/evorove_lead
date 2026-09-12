@@ -14,7 +14,7 @@ from evorove_lead.candidate import Candidate
 from evorove_lead.handoff import Cycle1Handoff
 
 PERSON_ID_PREFIX = "ppl_"
-_EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 
 class LeadTouchSink(Protocol):
@@ -76,7 +76,7 @@ def stable_person_id(business_id: str, *, phone: str | None = None, email: str |
 def split_identity(blob: str) -> tuple[str | None, str | None, str | None]:
     text = (blob or "").strip()
     email = None
-    match = _EMAIL_RE.search(text)
+    match = EMAIL_RE.search(text)
     if match:
         email = match.group(0).casefold()
         text = f"{text[:match.start()]} {text[match.end():]}"
