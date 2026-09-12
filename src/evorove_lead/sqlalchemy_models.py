@@ -67,6 +67,14 @@ class HypothesisRow(Base):
     evidence_score = Column(Float, nullable=False, default=0.0)
     reach_estimate = Column(Integer, nullable=False, default=0)
     created_at = Column(DateTime(timezone=True), nullable=False)
+    # Phase 4: filled in by reweight_hypotheses.py, not by the engine.
+    # accept_rate = share of candidates this hypothesis produced that
+    # reached Cold; close_rate = share of those Cold candidates whose case
+    # later reached Done. query_budget is how many probe rounds the next
+    # run should spend on this hypothesis (0 once paused).
+    accept_rate = Column(Float, nullable=False, default=0.0)
+    close_rate = Column(Float, nullable=False, default=0.0)
+    query_budget = Column(Integer, nullable=False, default=1)
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_hypotheses_business_id_id"),
@@ -79,6 +87,7 @@ class HypothesisRow(Base):
         CheckConstraint(
             "status IN ('live','dead','paused')", name="ck_hypotheses_known_status"
         ),
+        CheckConstraint("query_budget >= 0", name="ck_hypotheses_budget_nonnegative"),
     )
 
 
@@ -183,4 +192,40 @@ class HypothesisOutcomeRow(Base):
             "outcome IN ('done','dropped','offer_made','in_progress')",
             name="ck_hypothesis_outcomes_known_outcome",
         ),
+    )
+
+
+class HypothesisPatternLibraryRow(Base):
+    """System-wide, NOT tenant-scoped: abstract patterns only.
+
+    `business_archetype -> channel_family -> query_pattern ->
+    observed_close_rate_band`. `query_pattern` is a category (an
+    `IntentTrigger.kind`, e.g. "need_statement"), never a hypothesis's
+    literal `query_template` text -- that text can quote the owner's own
+    service wording and would identify the business. No contact, trace
+    text, or business/person identifier belongs in this table, ever.
+    """
+
+    __tablename__ = "hypothesis_pattern_library"
+
+    id = Column(String(128), primary_key=True)
+    business_archetype = Column(String(128), nullable=False)
+    channel_family = Column(String(64), nullable=False)
+    query_pattern = Column(String(64), nullable=False)
+    observed_close_rate_band = Column(String(16), nullable=False)
+    sample_size = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "business_archetype",
+            "channel_family",
+            "query_pattern",
+            name="uq_hypothesis_pattern_library_key",
+        ),
+        CheckConstraint(
+            "observed_close_rate_band IN ('low','medium','high')",
+            name="ck_hypothesis_pattern_library_known_band",
+        ),
+        CheckConstraint("sample_size >= 0", name="ck_hypothesis_pattern_library_sample_nonnegative"),
     )

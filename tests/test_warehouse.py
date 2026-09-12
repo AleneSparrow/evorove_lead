@@ -78,6 +78,30 @@ def test_hypothesis_round_trips_and_is_tenant_scoped(warehouse):
     assert [h.id for h in hypotheses] == ["hyp-1"]
     assert hypotheses[0].intent_trigger == "need_statement"
     assert hypotheses[0].status == "live"
+    # Phase 4 fields default to unrated until reweight_hypotheses.py runs.
+    assert hypotheses[0].accept_rate == 0.0
+    assert hypotheses[0].close_rate == 0.0
+    assert hypotheses[0].query_budget == 1
+
+
+def test_hypothesis_budget_fields_round_trip(warehouse):
+    from dataclasses import replace
+
+    warehouse.save_brief(_brief("biz-a", "brief-1"))
+    warehouse.save_hypothesis(
+        replace(
+            _hypothesis("biz-a", "brief-1", "hyp-1"),
+            accept_rate=0.5,
+            close_rate=0.4,
+            query_budget=3,
+        )
+    )
+
+    hypothesis = warehouse.list_hypotheses("biz-a")[0]
+
+    assert hypothesis.accept_rate == 0.5
+    assert hypothesis.close_rate == 0.4
+    assert hypothesis.query_budget == 3
 
 
 def test_trace_round_trips_and_is_tenant_scoped(warehouse):

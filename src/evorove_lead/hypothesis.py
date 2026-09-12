@@ -17,7 +17,11 @@ from typing import Protocol, Sequence
 
 from evorove_lead.candidate import CandidateRejected, accept_candidate
 from evorove_lead.offer import OfferUnderstanding
+from evorove_lead.pattern_library import PatternLibrary
 from evorove_lead.search import PeopleHit
+
+_PATTERN_BAND_RANK = {"high": 0, "medium": 1, "low": 2}
+_NO_PATTERN_RANK = 3
 
 INTENT_TRIGGER_KINDS = (
     "public_ask",
@@ -95,7 +99,11 @@ def _geo_suffix(geo_radius: GeoRadius) -> str:
 
 
 def build_hypotheses(
-    offer: OfferUnderstanding, geo_radius: GeoRadius
+    offer: OfferUnderstanding,
+    geo_radius: GeoRadius,
+    *,
+    pattern_library: PatternLibrary | None = None,
+    business_archetype: str = "",
 ) -> tuple[Hypothesis, ...]:
     """Derive testable hypotheses from a grounded offer.
 
@@ -104,6 +112,14 @@ def build_hypotheses(
     for the primary service. Every hypothesis is traceable to a claim
     that was already grounded in the owner's own materials -- nothing
     here invents an audience or a service the offer didn't already state.
+
+    When `pattern_library` and `business_archetype` are given, hypotheses
+    whose `intent_trigger.kind` matches a pattern this archetype has
+    historically closed well on (phase 4's system-wide, non-tenant
+    library) sort first -- so a new business doesn't start from zero. This
+    only reorders the list; it never touches `fit_score`/`evidence_score`,
+    which stay at their honest, unverified 0.0 until `verify_hypothesis`
+    actually measures something.
     """
 
     if not offer.what_we_sell:
@@ -153,7 +169,23 @@ def build_hypotheses(
             )
         )
 
+    if pattern_library is not None and business_archetype.strip():
+        return _prioritize_by_pattern_library(
+            hypotheses, pattern_library.suggest_patterns(business_archetype)
+        )
     return tuple(hypotheses)
+
+
+def _prioritize_by_pattern_library(
+    hypotheses: list[Hypothesis], suggestions: Sequence
+) -> tuple[Hypothesis, ...]:
+    band_by_pattern = {s.query_pattern: s.observed_close_rate_band for s in suggestions}
+
+    def rank(hypothesis: Hypothesis) -> int:
+        band = band_by_pattern.get(hypothesis.intent_trigger.kind)
+        return _PATTERN_BAND_RANK.get(band, _NO_PATTERN_RANK)
+
+    return tuple(sorted(hypotheses, key=rank))
 
 
 def verify_hypothesis(hypothesis: Hypothesis, probe: HypothesisProbe) -> Hypothesis:

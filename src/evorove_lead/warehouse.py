@@ -43,6 +43,13 @@ class HypothesisRecord:
     evidence_score: float
     reach_estimate: int
     created_at: datetime
+    # Phase 4 (reweight_hypotheses.py fills these in; the engine leaves
+    # them at their defaults): share of this hypothesis's candidates that
+    # reached Cold, share of those that later reached Done, and how many
+    # probe rounds the next run should spend here.
+    accept_rate: float = 0.0
+    close_rate: float = 0.0
+    query_budget: int = 1
 
 
 @dataclass(frozen=True)
@@ -173,6 +180,16 @@ class NullAnalysisWarehouse:
         return ()
 
 
+def _upsert(records: list, record) -> None:
+    """Replace the row with the same `.id`, or append. Mirrors `session.merge`."""
+
+    for index, existing in enumerate(records):
+        if existing.id == record.id:
+            records[index] = record
+            return
+    records.append(record)
+
+
 class RecordingAnalysisWarehouse:
     """In-memory warehouse for tests. Records what the engine would have written."""
 
@@ -185,13 +202,13 @@ class RecordingAnalysisWarehouse:
         self.hypothesis_outcomes: list[HypothesisOutcomeRecord] = []
 
     def save_brief(self, record: BriefRecord) -> None:
-        self.briefs.append(record)
+        _upsert(self.briefs, record)
 
     def list_briefs(self, business_id: str) -> Sequence[BriefRecord]:
         return tuple(r for r in self.briefs if r.business_id == business_id)
 
     def save_hypothesis(self, record: HypothesisRecord) -> None:
-        self.hypotheses.append(record)
+        _upsert(self.hypotheses, record)
 
     def list_hypotheses(self, business_id: str) -> Sequence[HypothesisRecord]:
         return tuple(r for r in self.hypotheses if r.business_id == business_id)
@@ -213,7 +230,7 @@ class RecordingAnalysisWarehouse:
         return tuple(r for r in self.rejected_traces if r.business_id == business_id)
 
     def save_candidate(self, record: CandidateRecord) -> None:
-        self.candidates.append(record)
+        _upsert(self.candidates, record)
 
     def list_candidates(
         self, business_id: str, hypothesis_id: str

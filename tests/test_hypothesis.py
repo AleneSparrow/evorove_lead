@@ -154,6 +154,58 @@ def test_verify_hypothesis_marks_real_hit_live_with_measured_scores():
     assert result.fit_score == 1.0
 
 
+def test_build_hypotheses_uses_pattern_library_to_order_by_archetype_history():
+    from evorove_lead.pattern_library import RecordingPatternLibrary
+
+    library = RecordingPatternLibrary()
+    library.record_observation(
+        business_archetype="catering",
+        channel_family="web_search",
+        query_pattern="need_statement",
+        close_rate=0.9,
+        sample_size=10,
+    )
+    library.record_observation(
+        business_archetype="catering",
+        channel_family="web_search",
+        query_pattern="demographic_fit",
+        close_rate=0.02,
+        sample_size=10,
+    )
+    offer = _offer()
+
+    hypotheses = build_hypotheses(
+        offer, GeoRadius(), pattern_library=library, business_archetype="catering"
+    )
+
+    kinds_in_order = [h.intent_trigger.kind for h in hypotheses]
+    # need_statement has a "high" band pattern -> first. public_ask has no
+    # recorded pattern at all -> ranks below even a "low"-band demographic_fit.
+    assert kinds_in_order[0] == "need_statement"
+    assert kinds_in_order[-1] == "public_ask"
+    # Reordering only -- fit_score/evidence_score stay honestly unverified.
+    assert all(h.fit_score == 0.0 and h.evidence_score == 0.0 for h in hypotheses)
+
+
+def test_build_hypotheses_without_archetype_ignores_pattern_library():
+    from evorove_lead.pattern_library import RecordingPatternLibrary
+
+    library = RecordingPatternLibrary()
+    library.record_observation(
+        business_archetype="catering",
+        channel_family="web_search",
+        query_pattern="need_statement",
+        close_rate=0.9,
+        sample_size=10,
+    )
+    offer = _offer()
+
+    with_library = build_hypotheses(offer, GeoRadius(), pattern_library=library)
+    without_library = build_hypotheses(offer, GeoRadius())
+
+    assert with_library == without_library
+
+
 def test_prioritize_hypotheses_drops_dead_and_unverified_and_sorts_live():
     dead = _hypothesis(status="dead")
     unverified = _hypothesis(status="live", reach_estimate=0)

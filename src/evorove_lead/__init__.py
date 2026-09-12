@@ -43,8 +43,16 @@ from evorove_lead.offer import (
     accept_offer_understanding,
 )
 from evorove_lead.offer_reader import read_offer
+from evorove_lead.pattern_library import (
+    NullPatternLibrary,
+    PatternLibrary,
+    PatternObservation,
+    RecordingPatternLibrary,
+    close_rate_band,
+)
 from evorove_lead.policy import LeadGenerationPolicy
 from evorove_lead.presence import HttpPresenceSource, PresenceRejected, page_material
+from evorove_lead.reweight_hypotheses import HypothesisReweight, compute_rates, reweight_hypotheses
 from evorove_lead.search import (
     HypothesisPeopleSearch,
     PeopleHit,
@@ -77,16 +85,21 @@ __all__ = [
     "Hypothesis",
     "HypothesisPeopleSearch",
     "HypothesisProbe",
+    "HypothesisReweight",
     "IntentTrigger",
     "LeadGenerationEngine",
     "LeadGenerationPolicy",
     "MaterialRejected",
+    "NullPatternLibrary",
     "ObservationRejected",
     "OfferRejected",
     "OfferUnderstanding",
     "OwnerObservationPeopleSearch",
+    "PatternLibrary",
+    "PatternObservation",
     "PeopleHit",
     "PresenceRejected",
+    "RecordingPatternLibrary",
     "RejectedHit",
     "SearchHit",
     "TraceFinding",
@@ -97,12 +110,15 @@ __all__ = [
     "accept_candidate_for_offer",
     "accept_offer_understanding",
     "build_hypotheses",
+    "close_rate_band",
+    "compute_rates",
     "fetch_page_text",
     "load_deposited_materials",
     "load_owner_observations",
     "page_material",
     "prioritize_hypotheses",
     "read_offer",
+    "reweight_hypotheses",
     "verify_hypothesis",
     "web_search_client_from_env",
 ]

@@ -81,6 +81,9 @@ def _hypothesis_to_row(record: HypothesisRecord) -> HypothesisRow:
         evidence_score=record.evidence_score,
         reach_estimate=record.reach_estimate,
         created_at=record.created_at,
+        accept_rate=record.accept_rate,
+        close_rate=record.close_rate,
+        query_budget=record.query_budget,
     )
 
 
@@ -98,6 +101,9 @@ def _hypothesis_from_row(row: HypothesisRow) -> HypothesisRecord:
         evidence_score=row.evidence_score,
         reach_estimate=row.reach_estimate,
         created_at=row.created_at,
+        accept_rate=row.accept_rate,
+        close_rate=row.close_rate,
+        query_budget=row.query_budget,
     )
 
 
