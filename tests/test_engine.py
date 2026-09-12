@@ -467,6 +467,79 @@ def test_engine_persists_business_archetype_on_the_brief_and_reorders_by_pattern
     assert search.queries_in_order[0] == "public_ask"
 
 
+def test_engine_infers_geo_radius_from_brief_only_when_opted_in() -> None:
+    from evorove_lead.presence import page_material
+    from evorove_lead.search import TraceFinding
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    html_with_city = """
+    <html><body>
+      <h1>Weekend catering for local events</h1>
+      <p>Proudly serving Austin, TX since 2015. We cook for busy parents.</p>
+    </body></html>
+    """
+
+    class RecordingHypothesisSearch:
+        connected = True
+
+        def __init__(self) -> None:
+            self.geo_radii: list = []
+
+        def find(self, hypothesis):
+            self.geo_radii.append(hypothesis.geo_radius)
+            return ()
+
+    search_without_opt_in = RecordingHypothesisSearch()
+    LeadGenerationEngine(
+        presence=FakePresence(html=html_with_city),
+        hypothesis_search=search_without_opt_in,
+        warehouse=RecordingAnalysisWarehouse(),
+    ).generate(SEED)
+    assert all(g.locality == "" for g in search_without_opt_in.geo_radii)
+
+    search_with_opt_in = RecordingHypothesisSearch()
+    LeadGenerationEngine(
+        presence=FakePresence(html=html_with_city),
+        hypothesis_search=search_with_opt_in,
+        warehouse=RecordingAnalysisWarehouse(),
+        infer_geo_radius_from_brief=True,
+    ).generate(SEED)
+    assert all(g.locality == "Austin, TX" for g in search_with_opt_in.geo_radii)
+
+
+def test_engine_explicit_geo_radius_always_wins_over_inference() -> None:
+    from evorove_lead.hypothesis import GeoRadius
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    html_with_city = """
+    <html><body>
+      <h1>Weekend catering for local events</h1>
+      <p>Proudly serving Austin, TX since 2015. We cook for busy parents.</p>
+    </body></html>
+    """
+
+    class RecordingHypothesisSearch:
+        connected = True
+
+        def __init__(self) -> None:
+            self.geo_radii: list = []
+
+        def find(self, hypothesis):
+            self.geo_radii.append(hypothesis.geo_radius)
+            return ()
+
+    search = RecordingHypothesisSearch()
+    LeadGenerationEngine(
+        presence=FakePresence(html=html_with_city),
+        hypothesis_search=search,
+        warehouse=RecordingAnalysisWarehouse(),
+        geo_radius=GeoRadius(locality="Denver"),
+        infer_geo_radius_from_brief=True,
+    ).generate(SEED)
+
+    assert all(g.locality == "Denver" for g in search.geo_radii)
+
+
 def test_engine_hypothesis_pipeline_reports_unconnected_search() -> None:
     from evorove_lead.warehouse import RecordingAnalysisWarehouse
 

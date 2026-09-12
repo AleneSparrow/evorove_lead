@@ -12,7 +12,9 @@ from enum import Enum
 from evorove_lead.business import BusinessSeed
 from evorove_lead.candidate import Candidate, CandidateRejected, accept_candidate_for_offer
 from evorove_lead.handoff import Cycle1Handoff
+from evorove_lead.geo import infer_geo_radius
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, build_hypotheses, verify_hypothesis
+from evorove_lead.materials import DepositedMaterial
 from evorove_lead.offer import OfferRejected, OfferUnderstanding
 from evorove_lead.offer_reader import read_offer
 from evorove_lead.pattern_library import PatternLibrary
@@ -79,6 +81,7 @@ class LeadGenerationEngine:
         hypothesis_search: HypothesisPeopleSearch | None = None,
         geo_radius: GeoRadius | None = None,
         pattern_library: PatternLibrary | None = None,
+        infer_geo_radius_from_brief: bool = False,
     ) -> None:
         self._presence = presence
         self._people_search = people_search or UnconnectedPeopleSearch()
@@ -89,11 +92,14 @@ class LeadGenerationEngine:
         # `HypothesisPeopleSearch`, not the offer-wide `PeopleSearch` bridge
         # below. When set, it replaces the bridge path entirely.
         self._hypothesis_search = hypothesis_search
-        # Explicit, not hardcoded: the contract's default is the client's own
-        # city/service area, not the whole US market. Deriving that from the
-        # brief automatically is not built yet -- callers pass it in; an
-        # unset radius means "whole US market", not a silent narrowing.
-        self._geo_radius = geo_radius or GeoRadius()
+        # An explicit `geo_radius` always wins. Otherwise, opt into
+        # `geo.infer_geo_radius` reading the client's own city/zone out of
+        # their materials (`infer_geo_radius_from_brief=True`) -- off by
+        # default, because a text heuristic can misfire and silently
+        # narrowing production search scope is worse than the honest,
+        # wide default. Neither set: whole US market, not a guess.
+        self._explicit_geo_radius = geo_radius
+        self._infer_geo_radius_from_brief = infer_geo_radius_from_brief
         # Phase 4: system-wide, non-tenant. Only ever consulted when
         # `seed.business_archetype` is set -- the engine never invents one.
         self._pattern_library = pattern_library if pattern_library is not None else pattern_library_from_env()
@@ -127,7 +133,7 @@ class LeadGenerationEngine:
             )
 
         if self._hypothesis_search is not None:
-            return self._generate_via_hypotheses(seed, offer)
+            return self._generate_via_hypotheses(seed, offer, materials)
 
         if not self._policy.may_seek_people(
             offer=offer, search_connected=self._people_search.connected
@@ -228,8 +234,18 @@ class LeadGenerationEngine:
         )
         return hypothesis_id
 
+    def _resolve_geo_radius(self, materials: tuple[DepositedMaterial, ...]) -> GeoRadius:
+        if self._explicit_geo_radius is not None:
+            return self._explicit_geo_radius
+        if self._infer_geo_radius_from_brief:
+            return infer_geo_radius(materials)
+        return GeoRadius()
+
     def _generate_via_hypotheses(
-        self, seed: BusinessSeed, offer: OfferUnderstanding
+        self,
+        seed: BusinessSeed,
+        offer: OfferUnderstanding,
+        materials: tuple[DepositedMaterial, ...],
     ) -> GenerationResult:
         """Phase 2's real path: hypothesis -> query -> trace -> re-analysis -> Cold.
 
@@ -265,7 +281,7 @@ class LeadGenerationEngine:
         seen_identities: set[str] = set()
         hypotheses = build_hypotheses(
             offer,
-            self._geo_radius,
+            self._resolve_geo_radius(materials),
             pattern_library=self._pattern_library,
             business_archetype=seed.business_archetype,
         )

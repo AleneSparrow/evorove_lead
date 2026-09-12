@@ -42,6 +42,7 @@ from evorove_lead.offer import (
     OfferUnderstanding,
     accept_offer_understanding,
 )
+from evorove_lead.geo import infer_geo_radius
 from evorove_lead.offer_reader import read_offer
 from evorove_lead.pattern_library import (
     NullPatternLibrary,
@@ -113,6 +114,7 @@ __all__ = [
     "close_rate_band",
     "compute_rates",
     "fetch_page_text",
+    "infer_geo_radius",
     "load_deposited_materials",
     "load_owner_observations",
     "page_material",

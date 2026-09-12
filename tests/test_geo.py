@@ -1,0 +1,49 @@
+from evorove_lead.geo import infer_geo_radius
+from evorove_lead.materials import DepositedMaterial
+
+
+def _material(body: str) -> DepositedMaterial:
+    return DepositedMaterial(name="site", body=body)
+
+
+def test_infers_locality_after_in():
+    radius = infer_geo_radius((_material("Weekend catering in Austin for busy parents."),))
+    assert radius.locality == "Austin"
+    assert radius.country == "US"
+
+
+def test_infers_locality_with_state_after_comma():
+    radius = infer_geo_radius((_material("Proudly serving Austin, TX since 2015."),))
+    assert radius.locality == "Austin, TX"
+
+
+def test_recognizes_based_in_and_located_in():
+    assert infer_geo_radius((_material("Based in Round Rock for ten years."),)).locality == "Round Rock"
+    assert infer_geo_radius((_material("Located in Cedar Park."),)).locality == "Cedar Park"
+
+
+def test_lowercase_in_town_does_not_match():
+    """"in town", "in fact", "in 2020" aren't cities -- capitalization is required."""
+
+    radius = infer_geo_radius((_material("We cook for busy parents in town."),))
+    assert radius.locality == ""
+
+
+def test_no_match_returns_whole_us_default():
+    radius = infer_geo_radius((_material("Weekend catering for local events."),))
+    assert radius == infer_geo_radius(())
+    assert radius.locality == ""
+    assert radius.country == "US"
+
+
+def test_checks_materials_in_order_and_stops_at_first_hit():
+    radius = infer_geo_radius(
+        (
+            _material("Nothing here."),
+            _material("Serving Denver and the surrounding area."),
+            _material("Also near Boulder."),
+        )
+    )
+    # Lowercase "and" ends the capitalized-word run; only "Denver" matches.
+    # The second material (Boulder) is never reached.
+    assert radius.locality == "Denver"
