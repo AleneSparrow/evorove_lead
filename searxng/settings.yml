@@ -1,0 +1,19 @@
+# Minimal override merged onto SearxNG's own defaults (use_default_settings).
+# The only things web_search.py actually needs: JSON output enabled, and
+# the rate limiter off (it's meant to block scraping bots -- our own
+# connector, querying its own local instance, is not one).
+use_default_settings: true
+
+general:
+  instance_name: "evorove_lead pilot search"
+
+search:
+  formats:
+    - html
+    - json
+
+server:
+  # Local pilot only. Generate a real secret_key before exposing this
+  # instance beyond localhost -- do not reuse this value in production.
+  secret_key: "local_development_only_change_before_any_real_deployment"
+  limiter: false

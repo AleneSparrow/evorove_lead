@@ -28,6 +28,30 @@ from evorove_lead.presence import (
 )
 
 SEARCH_TIMEOUT_SECONDS = 10
+
+
+def _validate_configured_base_url(url: str) -> str:
+    """Light check for an owner-configured endpoint -- same trust level as
+    `DATABASE_URL`/`CRM_BASE_URL`, not a URL discovered via search results.
+
+    Deliberately does NOT require a public host: `validate_public_http_url`
+    (used below in `fetch_page_text`, and for every URL a search result
+    hands back) exists to stop SSRF against untrusted, discovered URLs. A
+    self-hosted SearxNG instance is the opposite case -- it is expected to
+    run on localhost or an internal address the owner configured herself.
+    """
+
+    raw = (url or "").strip()
+    if not raw:
+        raise PresenceRejected("search base URL is required")
+    parsed = urlparse(raw)
+    if parsed.scheme not in {"http", "https"}:
+        raise PresenceRejected("search base URL must be http(s)")
+    if parsed.username or parsed.password:
+        raise PresenceRejected("search base URL must not contain credentials")
+    if not parsed.hostname:
+        raise PresenceRejected("search base URL must have a host")
+    return raw
 MAX_RESULTS_PER_QUERY = 5
 
 
@@ -67,7 +91,7 @@ class HttpSearxngWebSearchClient:
     """Query a SearxNG-shaped JSON search endpoint the owner runs herself."""
 
     def __init__(self, base_url: str, opener=urlopen) -> None:
-        self._base_url = validate_public_http_url(base_url).rstrip("/")
+        self._base_url = _validate_configured_base_url(base_url).rstrip("/")
         self._opener = opener
 
     def search(self, query: str) -> Sequence[SearchHit]:

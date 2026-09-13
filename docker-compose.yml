@@ -1,4 +1,19 @@
 services:
+  # The pilot's "own parser, not a paid search API" source (web_search.py):
+  # a self-hosted, open-source metasearch engine. Point WEB_SEARCH_BASE_URL
+  # at it (http://localhost:8080 from the host; http://searxng:8080 from
+  # another container on this compose network).
+  searxng:
+    image: searxng/searxng:latest
+    ports:
+      - "${SEARXNG_PORT:-8080}:8080"
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    cap_add:
+      - SETGID
+      - SETUID
+    restart: unless-stopped
+
   postgres:
     image: postgres:17-alpine
     environment:

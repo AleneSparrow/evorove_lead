@@ -55,9 +55,26 @@ def test_client_parses_searxng_shaped_results():
     )
 
 
-def test_client_rejects_non_public_base_url():
+def test_client_accepts_localhost_base_url():
+    """A self-hosted SearxNG is expected to run on localhost -- this must not reject it."""
+
+    client = HttpSearxngWebSearchClient("http://localhost:8080")
+    assert client._base_url == "http://localhost:8080"
+
+
+def test_client_rejects_bad_scheme_base_url():
     with pytest.raises(PresenceRejected):
-        HttpSearxngWebSearchClient("http://localhost:8080")
+        HttpSearxngWebSearchClient("ftp://searx.internal:8080")
+
+
+def test_client_rejects_base_url_with_credentials():
+    with pytest.raises(PresenceRejected):
+        HttpSearxngWebSearchClient("http://user:pass@searx.internal:8080")
+
+
+def test_client_rejects_blank_base_url():
+    with pytest.raises(PresenceRejected):
+        HttpSearxngWebSearchClient("")
 
 
 def test_client_returns_empty_on_malformed_json():
@@ -83,9 +100,9 @@ def test_client_from_env_needs_base_url(monkeypatch):
     assert isinstance(client_from_env(), HttpSearxngWebSearchClient)
 
 
-def test_client_from_env_rejects_non_public_url(monkeypatch):
+def test_client_from_env_accepts_localhost(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BASE_URL", "http://localhost:8080")
-    assert client_from_env() is None
+    assert isinstance(client_from_env(), HttpSearxngWebSearchClient)
 
 
 def test_fetch_page_text_extracts_visible_text():
