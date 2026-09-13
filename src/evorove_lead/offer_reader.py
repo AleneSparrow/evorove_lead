@@ -22,6 +22,25 @@ FOR_PATTERN = re.compile(
 )
 PRICE_PATTERN = re.compile(r"\$\d+(?:,\d{3})*(?:\.\d{2})?")
 
+# A negated "for X" ("Nobody builds a version for your company") is not an
+# audience claim -- the opposite of one. Checked against the few words
+# immediately before "for" in the same chunk.
+_NEGATION_WORDS = frozenset(
+    {
+        "no", "nobody", "none", "not", "never", "without", "nor", "cannot",
+        "isn't", "aren't", "wasn't", "weren't", "doesn't", "don't", "didn't",
+        "won't", "wouldn't", "can't", "couldn't", "shouldn't", "hasn't",
+        "haven't", "hadn't",
+    }
+)
+_WORD_RE = re.compile(r"[A-Za-z']+")
+_NEGATION_LOOKBACK_WORDS = 5
+
+
+def _is_negated_before(chunk: str, match_start: int) -> bool:
+    preceding_words = _WORD_RE.findall(chunk[:match_start])[-_NEGATION_LOOKBACK_WORDS:]
+    return any(word.casefold() in _NEGATION_WORDS for word in preceding_words)
+
 
 def _first_line(body: str) -> str:
     for line in body.splitlines():
@@ -45,6 +64,8 @@ def _audience_phrases(body: str) -> tuple[str, ...]:
             phrase = match.group(1).strip(" -,")
             key = phrase.casefold()
             if len(phrase) < 3 or key in seen:
+                continue
+            if _is_negated_before(chunk, match.start()):
                 continue
             seen.add(key)
             found.append(phrase)
