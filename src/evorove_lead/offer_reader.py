@@ -13,11 +13,27 @@ from evorove_lead.offer import (
     accept_offer_understanding,
 )
 
-# Up to three words after "for", then stop (so the rest of the page is not
-# swallowed into the audience phrase).
+# Up to six words after the trigger word. Six, not three: "small local
+# service businesses" alone is four words -- a real audience phrase found
+# piloting this against evorove.com's own copy that the old three-word cap
+# silently dropped. Each word in the phrase is checked against
+# _AUDIENCE_STOP_WORDS *as it's consumed* (a negative lookahead per word),
+# not only at the end: a plain end-of-phrase lookahead lets a greedy match
+# run straight past a stop word whenever a period follows it anyway
+# ("busy parents in town." would otherwise swallow "in town" too, since
+# reaching the "." still satisfies an end-of-match check).
+#
+# Trigger words beyond "for": a business can name its audience as "serves
+# X" or "helps X" without ever writing the word "for" at all.
+_AUDIENCE_TRIGGER = r"(?:for|serves|serving|help|helps|helping|works with)"
+_AUDIENCE_STOP_WORDS = (
+    "in", "that", "who", "with", "we", "our", "and", "or", "but", "so",
+    "since", "before", "after", "because", "while", "when", "if", "as",
+)
+_NOT_A_STOP_WORD = rf"(?!\b(?:{'|'.join(_AUDIENCE_STOP_WORDS)})\b)"
+_AUDIENCE_WORD = rf"{_NOT_A_STOP_WORD}[A-Za-z][A-Za-z']*"
 FOR_PATTERN = re.compile(
-    r"\bfor\s+([A-Za-z][A-Za-z']*(?:\s+[A-Za-z][A-Za-z']*){0,2})"
-    r"(?=\s+(?:in|that|who|with|we|our)\b|[.,;:]|$)",
+    rf"\b{_AUDIENCE_TRIGGER}\s+({_AUDIENCE_WORD}(?:\s+{_AUDIENCE_WORD}){{0,5}})",
     re.IGNORECASE,
 )
 PRICE_PATTERN = re.compile(r"\$\d+(?:,\d{3})*(?:\.\d{2})?")

@@ -37,6 +37,21 @@ def _collapse(text: str) -> str:
     return " ".join(text.split())
 
 
+# Closing one of these tags ends a sentence-like unit of visible text.
+# Without this, two unrelated block elements ("<h1>Weekend catering for
+# local events</h1><p>Evorove serves small businesses...</p>") join into
+# one grammatical run with nothing but a space between them, and a
+# downstream sentence-scoped heuristic (offer_reader.py's audience-phrase
+# extraction) can bridge straight across the boundary as if it were one
+# sentence.
+_BLOCK_TAGS = frozenset(
+    {
+        "p", "div", "li", "h1", "h2", "h3", "h4", "h5", "h6",
+        "section", "article", "header", "footer", "tr", "blockquote", "br",
+    }
+)
+
+
 class PageParser(HTMLParser):
     """Visible title, headings, and body from the owner's HTML."""
 
@@ -78,6 +93,8 @@ class PageParser(HTMLParser):
                 self.headings.append(heading)
             self._in_heading = False
             self._heading_buf = []
+        if lowered in _BLOCK_TAGS and self._parts and self._parts[-1] != ".":
+            self._parts.append(".")
 
     def handle_data(self, data: str) -> None:
         if self._skip:

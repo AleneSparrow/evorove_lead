@@ -69,6 +69,37 @@ def test_negation_a_few_words_further_back_is_still_caught() -> None:
     assert "enterprise clients" not in audience_texts
 
 
+def test_four_word_audience_phrase_is_no_longer_dropped() -> None:
+    """Real case from piloting evorove.com's own copy: the old three-word
+    cap silently dropped "small local service businesses" (four words)."""
+
+    html = (
+        "<html><head><title>T</title></head><body>"
+        "<h1>Weekend catering for local events</h1>"
+        "<p>Evorove finds, sells, and closes leads for small local service businesses.</p>"
+        "</body></html>"
+    )
+
+    offer = read_offer((page_material(SITE, html),))
+
+    audience_texts = {claim.text.casefold() for claim in offer.who_may_fit}
+    assert "small local service businesses" in audience_texts
+
+
+def test_serves_trigger_word_without_the_word_for() -> None:
+    html = (
+        "<html><head><title>T</title></head><body>"
+        "<h1>Weekend catering for local events</h1>"
+        "<p>Evorove serves small businesses that want more customers.</p>"
+        "</body></html>"
+    )
+
+    offer = read_offer((page_material(SITE, html),))
+
+    audience_texts = {claim.text.casefold() for claim in offer.who_may_fit}
+    assert "small businesses" in audience_texts
+
+
 def test_a_real_for_phrase_near_an_unrelated_negation_still_matches() -> None:
     """The lookback window shouldn't blank out a genuine audience claim just
     because some negation appeared earlier in the same sentence fragment."""
