@@ -52,7 +52,8 @@ from evorove_lead.pattern_library import (
     close_rate_band,
 )
 from evorove_lead.policy import LeadGenerationPolicy
-from evorove_lead.presence import HttpPresenceSource, PresenceRejected, page_material
+from evorove_lead.presence import HttpPresenceSource, PresenceRejected, RenderRejected, page_material
+from evorove_lead.rendering import render_page_html
 from evorove_lead.reweight_hypotheses import HypothesisReweight, compute_rates, reweight_hypotheses
 from evorove_lead.search import (
     HypothesisPeopleSearch,
@@ -100,6 +101,7 @@ __all__ = [
     "PatternObservation",
     "PeopleHit",
     "PresenceRejected",
+    "RenderRejected",
     "RecordingPatternLibrary",
     "RejectedHit",
     "SearchHit",
@@ -120,6 +122,7 @@ __all__ = [
     "page_material",
     "prioritize_hypotheses",
     "read_offer",
+    "render_page_html",
     "reweight_hypotheses",
     "verify_hypothesis",
     "web_search_client_from_env",

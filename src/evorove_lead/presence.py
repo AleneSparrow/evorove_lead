@@ -22,6 +22,12 @@ class PresenceRejected(ValueError):
     """The engine will not treat this as the owner's public site."""
 
 
+class RenderRejected(ValueError):
+    """`rendering.py` could not headless-render the page. Defined here (not
+    there) so `rendering.py` can import `USER_AGENT` from this module
+    without a circular import back."""
+
+
 class PresenceSource(Protocol):
     def load(self, seed: BusinessSeed) -> tuple[DepositedMaterial, ...]:
         """Return the business's own words, named by source."""
@@ -155,18 +161,59 @@ def _host_is_public(host: str) -> bool:
     return True
 
 
-class HttpPresenceSource:
-    """Fetch the owner's public site. Tests inject a fake opener or presence."""
+# A client-rendered SPA serves a near-empty `<div id="root"></div>` shell
+# over plain HTTP -- evorove.com itself is one (see rendering.py). Below
+# this many characters of extracted body text, it's worth trying a
+# headless render instead of accepting a brief built on almost nothing.
+MIN_PLAIN_FETCH_TEXT_CHARS = 150
 
-    def __init__(self, opener=urlopen, host_ok=_host_is_public) -> None:
+
+def _default_renderer(url: str) -> str:
+    from evorove_lead.rendering import render_page_html
+
+    return render_page_html(url)
+
+
+class HttpPresenceSource:
+    """Fetch the owner's public site. Tests inject a fake opener or presence.
+
+    Falls back to a headless-rendered fetch (`rendering.py`) when the
+    plain fetch's extracted text is too thin to be a real brief -- never
+    instead of the plain fetch, which is faster and sufficient for most
+    sites. Rendering is best-effort: any failure there (Playwright not
+    installed, a browser crash, a timeout) just means this keeps
+    whatever the plain fetch already got, same as if rendering had never
+    been tried.
+    """
+
+    def __init__(
+        self,
+        opener=urlopen,
+        host_ok=_host_is_public,
+        renderer=None,
+        min_plain_fetch_text_chars: int = MIN_PLAIN_FETCH_TEXT_CHARS,
+    ) -> None:
         self._opener = opener
         self._host_ok = host_ok
+        self._renderer = renderer
+        self._min_plain_fetch_text_chars = min_plain_fetch_text_chars
 
     def load(self, seed: BusinessSeed) -> tuple[DepositedMaterial, ...]:
         url = validate_public_http_url(seed.site_url)
         host = urlparse(url).hostname or ""
         if not self._host_ok(host):
             raise PresenceRejected("site URL host is not a public site")
+
+        material = page_material(url, self._fetch(url))
+        if len(material.body) < self._min_plain_fetch_text_chars:
+            rendered_html = self._try_render(url)
+            if rendered_html is not None:
+                rendered_material = page_material(url, rendered_html)
+                if len(rendered_material.body) > len(material.body):
+                    material = rendered_material
+        return (material,)
+
+    def _fetch(self, url: str) -> str:
         request = Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with self._opener(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
@@ -178,5 +225,11 @@ class HttpPresenceSource:
             raise PresenceRejected("owner site could not be read") from exc
         if len(body) > MAX_BODY_BYTES:
             raise PresenceRejected("owner site is too large")
-        html = body.decode("utf-8", errors="replace")
-        return (page_material(url, html),)
+        return body.decode("utf-8", errors="replace")
+
+    def _try_render(self, url: str) -> str | None:
+        renderer = self._renderer or _default_renderer
+        try:
+            return renderer(url)
+        except RenderRejected:
+            return None

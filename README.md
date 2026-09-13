@@ -42,4 +42,15 @@ drops -- no name, contact, or message text; the request schema has no field
 for one. Feeds the warehouse's `hypothesis_outcomes` table for a future
 reweighting job, not `LeadGenerationEngine` itself.
 
+## Local setup
+
+- `pip install -e .[dev]`, then `python -m playwright install chromium` --
+  `presence.py` falls back to a headless render (`rendering.py`) when a
+  business's site is a client-rendered SPA (an empty `<div id="root">`
+  shell over plain HTTP; `evorove.com` itself is one) and the browser
+  binary has to be fetched separately from the Python package.
+- `docker compose up -d` starts this repo's own Postgres (5435) and a
+  self-hosted SearxNG (8080, phase 2's `WEB_SEARCH_BASE_URL`) -- see
+  `.env.example`.
+
 Owner-facing contract (Russian): [`docs/cycle-1-contract.md`](docs/cycle-1-contract.md).

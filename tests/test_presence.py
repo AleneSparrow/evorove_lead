@@ -55,7 +55,12 @@ def test_http_presence_reads_injected_response() -> None:
         assert request.full_url == "https://sunrise-bakery.example/"
         return _FakeResponse(BAKERY_HTML.encode("utf-8"), request.full_url)
 
-    source = HttpPresenceSource(opener=opener, host_ok=lambda host: True)
+    # BAKERY_HTML's extracted text is short enough to trigger the render
+    # fallback (see test_presence_render_fallback.py); a no-op renderer
+    # keeps this test hermetic regardless of that threshold.
+    source = HttpPresenceSource(
+        opener=opener, host_ok=lambda host: True, renderer=lambda url: None
+    )
     materials = source.load(BusinessSeed(site_url="https://sunrise-bakery.example/"))
 
     assert len(materials) == 1
