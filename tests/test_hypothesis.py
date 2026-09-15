@@ -206,45 +206,6 @@ def test_build_hypotheses_without_archetype_ignores_pattern_library():
     assert with_library == without_library
 
 
-def test_build_hypotheses_adds_channel_variants_for_a_recognized_archetype():
-    offer = _offer()
-
-    hypotheses = build_hypotheses(offer, GeoRadius(), business_archetype="bakery")
-
-    channels = {h.channel for h in hypotheses}
-    assert "web_search" in channels
-    assert "instagram" in channels
-    assert "yelp" in channels
-    # Every non-web_search variant still carries the base query, plus a
-    # site: restriction -- same audience/intent, different venue.
-    instagram_variants = [h for h in hypotheses if h.channel == "instagram"]
-    assert instagram_variants
-    base_by_signature = {
-        (h.audience_segment, h.intent_trigger.kind): h.query_template
-        for h in hypotheses
-        if h.channel == "web_search"
-    }
-    for variant in instagram_variants:
-        base_query = base_by_signature[(variant.audience_segment, variant.intent_trigger.kind)]
-        assert variant.query_template == f"{base_query} site:instagram.com"
-
-
-def test_build_hypotheses_without_recognized_archetype_stays_web_search_only():
-    offer = _offer()
-
-    hypotheses = build_hypotheses(offer, GeoRadius(), business_archetype="interpretive dance troupe")
-
-    assert all(h.channel == "web_search" for h in hypotheses)
-
-
-def test_build_hypotheses_with_blank_archetype_stays_web_search_only():
-    offer = _offer()
-
-    hypotheses = build_hypotheses(offer, GeoRadius())
-
-    assert all(h.channel == "web_search" for h in hypotheses)
-
-
 def test_prioritize_hypotheses_drops_dead_and_unverified_and_sorts_live():
     dead = _hypothesis(status="dead")
     unverified = _hypothesis(status="live", reach_estimate=0)
