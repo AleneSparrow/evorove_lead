@@ -16,6 +16,7 @@ from dataclasses import dataclass, replace
 from typing import Protocol, Sequence
 
 from evorove_lead.candidate import CandidateRejected, accept_candidate
+from evorove_lead.channel_library import channels_for_archetype
 from evorove_lead.offer import OfferUnderstanding
 from evorove_lead.pattern_library import PatternLibrary
 from evorove_lead.search import PeopleHit
@@ -189,11 +190,39 @@ def build_hypotheses(
             )
         )
 
+    hypotheses.extend(_channel_variants(hypotheses, business_archetype))
+
     if pattern_library is not None and business_archetype.strip():
         return _prioritize_by_pattern_library(
             hypotheses, pattern_library.suggest_patterns(business_archetype)
         )
     return tuple(hypotheses)
+
+
+def _channel_variants(
+    base_hypotheses: Sequence[Hypothesis], business_archetype: str
+) -> tuple[Hypothesis, ...]:
+    """One extra hypothesis per (base hypothesis, seed channel) for this archetype.
+
+    Same audience/intent as the base -- only `channel` and `query_template`
+    differ (a `site:`-restricted variant of the same query, still through
+    the existing metasearch client). An archetype `channels_for_archetype`
+    doesn't recognize contributes nothing here; every hypothesis stays
+    plain `web_search`, same as before this existed.
+    """
+
+    targets = channels_for_archetype(business_archetype)
+    if not targets:
+        return ()
+    return tuple(
+        replace(
+            base,
+            channel=target.channel,
+            query_template=f"{base.query_template} {target.site_filter}".strip(),
+        )
+        for base in base_hypotheses
+        for target in targets
+    )
 
 
 def _prioritize_by_pattern_library(
