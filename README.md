@@ -18,7 +18,7 @@ The product north star lives in the sales sister, not here: `/Users/alenakulish/
 
 ## What this repo is not
 
-- Not live open-web finding in production. The default people source is unconnected. Owner-deposited JSONL is a stub, not the product.
+- Not live open-web finding for arbitrary tenants in production. The default people source is `UnconnectedPeopleSearch`; when the owner sets `WEB_SEARCH_BASE_URL`, `WebSearchPeopleSearch` runs and Cold can fill after re-analysis. Client 0 (Evorove selling itself) is the first live metric, not a promise that search already finds customers for any business.
 - Not outreach. Messaging is cycle 2.
 - Not a sales conversation, booking calendar, quote engine, or embeddable chat.
 
@@ -66,6 +66,19 @@ Deploy: one web service from this repo (the Dockerfile runs migrations and
 format enabled for `WEB_SEARCH_BASE_URL` (build `searxng/Dockerfile`, keep it
 private); a daily cron -- either POST `run-due`, or a cron service from this
 repo with start command `python -m evorove_lead.searches`. In the CRM set `EVOROVE_LEAD_BASE_URL` to this service's origin.
+
+## Client 0: running the search
+
+`python -m evorove_lead.client_zero` builds the brief from `https://evorove.com`
+(client 0 is Evorove selling itself, not a placeholder salon), runs the
+pilot the same way any tenant would, and prints counts only -- status,
+candidates, handoffs, rejected, `messages_sent=0`. It never prints an
+email, phone, or reason. Exits `2` when search is unconnected (no fake
+candidates printed as if a search ran). With `CRM_BASE_URL`,
+`INTERNAL_TASK_SECRET`, and `EVOROVE_CLIENT_ZERO_BUSINESS_ID` set, accepted
+people also POST to CRM Cold through the same path any tenant uses;
+without them the search still runs and only skips that POST.
+>>>>>>> b33822c (Close cycle-1 client-0 path: honest search docs, contract fit, Cold payload tests.)
 
 ## Local setup
 

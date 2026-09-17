@@ -147,3 +147,48 @@ def test_candidate_reason_must_tie_to_offer(tmp_path: Path) -> None:
             reason_source="phone dump",
             offer=offer,
         )
+
+
+def test_candidate_reason_rejects_the_offer_pasted_verbatim(tmp_path: Path) -> None:
+    """A dump: the client's own slogan standing in for a fact about the person."""
+
+    _write_ad(tmp_path)
+    offer = accept_offer_understanding(
+        materials=load_deposited_materials(tmp_path),
+        what_we_sell=[GroundedClaim(text="Weekend catering", source_name="ad-copy.txt")],
+        who_may_fit=[GroundedClaim(text="busy parents", source_name="ad-copy.txt")],
+    )
+
+    with pytest.raises(CandidateRejected, match="offer's own text"):
+        accept_candidate_for_offer(
+            identity="555-0100",
+            reason="Weekend catering",
+            reason_source="ad-copy.txt",
+            offer=offer,
+        )
+    with pytest.raises(CandidateRejected, match="offer's own text"):
+        accept_candidate_for_offer(
+            identity="555-0100",
+            reason="  weekend catering  ",
+            reason_source="ad-copy.txt",
+            offer=offer,
+        )
+
+
+def test_candidate_reason_need_not_quote_the_offer_verbatim(tmp_path: Path) -> None:
+    """A real fact from the open web describes the person, not the brief's exact words."""
+
+    _write_ad(tmp_path)
+    offer = accept_offer_understanding(
+        materials=load_deposited_materials(tmp_path),
+        what_we_sell=[GroundedClaim(text="Weekend catering", source_name="ad-copy.txt")],
+        who_may_fit=[GroundedClaim(text="busy parents", source_name="ad-copy.txt")],
+    )
+
+    accepted = accept_candidate_for_offer(
+        identity="Jordan Lee, owner@example-bakery.com",
+        reason="Posted looking for a caterer for their kid's weekend birthday party.",
+        reason_source="community-board.example/post/482",
+        offer=offer,
+    )
+    assert accepted.reason == "Posted looking for a caterer for their kid's weekend birthday party."

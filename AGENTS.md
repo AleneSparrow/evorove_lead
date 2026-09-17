@@ -10,7 +10,7 @@
 - Do not copy `src/`, the widget, Pulse landing, billing, sales playbook, `ProcessState`, `SalesStage`, or Docker from the sister repos. Law is not the product. No industry forks in code.
 - Microsoft Ad Library is EEA-only (DSA): optional brief input, not a US people directory.
 - AI may analyze the brief and open-web traces and phrase why a person fits. It may not invent price, discount, guarantee, or a legal claim. It may not book a slot.
-- People search is the `PeopleSearch` port. Default is `UnconnectedPeopleSearch`. Owner-deposited JSONL is a stub, not the product source. Do not pretend the open web already finds customers.
+- People search is the `PeopleSearch` port. Default is `UnconnectedPeopleSearch`. When `WEB_SEARCH_BASE_URL` is set, `WebSearchPeopleSearch` may run; Cold still requires contract re-analysis. Client 0 (`python -m evorove_lead.client_zero`) is the first live metric. Owner-deposited JSONL is a stub. Do not pretend search already finds customers for arbitrary tenants.
 - Never run `git push`; only the owner pushes. Do not create a GitHub remote.
 - Do not read, request, print, edit, or create secrets and local `.env` files. Do not log into or create accounts.
 - Do not add `SalesStage` or `ProcessState`. Do not implement email/SMS send or a queue of “write to this phone.”

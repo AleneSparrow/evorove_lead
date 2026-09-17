@@ -7,11 +7,14 @@ This module does not find people or contact them.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from evorove_lead.offer import OfferUnderstanding
+
+_WORD_RE = re.compile(r"[A-Za-z']{4,}")
 
 
 class CandidateRejected(ValueError):
@@ -49,6 +52,23 @@ def accept_candidate(*, identity: str, reason: str, reason_source: str) -> Candi
         reason=_require("reason", reason),
         reason_source=_require("reason_source", reason_source),
     )
+
+
+def _keywords(text: str) -> frozenset[str]:
+    return frozenset(match.casefold() for match in _WORD_RE.findall(text or ""))
+
+
+def _is_offer_text_pasted_as_reason(reason: str, claims: tuple) -> bool:
+    """Reject the offer's own slogan standing in for a fact about this person.
+
+    A candidate whose "reason" is just a claim from the brief, verbatim, is
+    not a concrete fact about *this* person's situation -- it is the
+    client's own text pasted next to a contact, the exact dump the contract
+    calls out ("дописанный оффер к телефону").
+    """
+
+    folded_reason = reason.casefold().strip()
+    return any(claim.text.casefold().strip() == folded_reason for claim in claims)
 
 
 def accept_candidate_for_offer(

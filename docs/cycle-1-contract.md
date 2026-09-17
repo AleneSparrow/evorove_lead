@@ -6,7 +6,7 @@
 
 Письмо — цикл 2. Закрытие — вкладка Done. Сюда не тащить GREET, слот, виджет.
 
-Живой поиск в открытом вебе **ещё не подключён**. Этот файл — как должно работать, не обещание, что уже ищет.
+По умолчанию поиск людей не подключён (`UnconnectedPeopleSearch`). Когда владелец задаёт `WEB_SEARCH_BASE_URL`, работает первый живой коннектор `WebSearchPeopleSearch` (раздел «Код сейчас» ниже) — но это не обещание, что поиск уже находит платящих клиентов в проде для чужого бизнеса. Первая живая метрика — продажа самого Evorove (клиент 0).
 
 ---
 
@@ -139,6 +139,12 @@
 
 Объект handoff **не** шлёт сообщение. Форма близка к `FoundPerson` в `evorove`.
 
+### Проверено на стыке с `evorove-crm` (сентябрь 2026)
+
+`crm_touch.assembled_touch` шлёт `POST /api/v1/internal/businesses/{business_id}/lead-touches` — тело принимает `evorove-crm`'s `LeadTouch.from_mapping` (`src/domain/lead_touch.py`). Поля совпадают один в один: `schema_version`, `touch_id`, `person_id`, `cycle=1`, `kind="assembled"`, `source="evorove_lead"`, `summary` (человеческая причина — то, что видит владелец на карточке Cold), `identity.{name,phone,email}`, `payload.{reason, reason_source, channel, hypothesis_id}`. CRM отклоняет `assembled` без телефона или почты (`not_addressable`) — то же требование, что и у `Candidate` в этом репозитории. Поля `consent_basis`, слот, `ProcessState` в этом payload физически отсутствуют — их некуда придумать. Тест на форму — [`tests/test_crm_touch.py`](../tests/test_crm_touch.py) (в этом репозитории; `evorove-crm` не импортируется — отдельный деплой).
+
+Хэндофф дальше по цепочке: карточка на Cold в `evorove-crm` **не** вызывает `evorove`'s Found сама. Кто-то (оператор `evorove-crm` или сама `evorove`, когда владелец включит живой GREET) вызывает `POST .../found` из `docs/cycle-2-found-ingest-contract.md` (репозиторий `evorove`) отдельно, и обязан подставить `consent_basis` в этот момент — этот репозиторий его не изобретает и не имеет для него поля. До этого включения карточка просто остаётся в Cold.
+
 ---
 
 ## Явные не-цели
@@ -154,13 +160,13 @@
 
 ## Код сейчас (честно)
 
-Сайт клиента читается как текст. Отбор в коде всё ещё цепляется к цитатам страницы — это **старая неверная метрика**, её менять под этот контракт. Поиск по умолчанию не подключён. Cold в CRM из генерации не наполняется.
+Сайт клиента читается как текст. Поиск по умолчанию не подключён (`UnconnectedPeopleSearch`); когда `WEB_SEARCH_BASE_URL` задан, работает `WebSearchPeopleSearch` (ниже) и Cold в CRM из генерации может наполняться (через `crm_touch.py`, если заданы `CRM_BASE_URL` и `INTERNAL_TASK_SECRET`).
 
 Склад анализа (Postgres цикла 1) физически есть: таблицы `briefs`, `hypotheses`, `traces`, `rejected_traces`, `candidates`, `hypothesis_outcomes`, тенант-скоуп по `business_id` (миграции в `migrations/`, порт 5435, отдельная база от `evorove`/`evorove-crm`). `LeadGenerationEngine` пишет туда сырой след и решение по каждому кандидату при наличии `business_id` — без похода в CRM.
 
 `hypothesis.py` тоже есть: `build_hypotheses(offer, geo_radius)` строит гипотезы по каждой аудитории из брифа (`demographic_fit`) плюс `public_ask`/`need_statement` вокруг основной услуги; `verify_hypothesis` прогоняет гипотезу через лёгкий `HypothesisProbe` и метит её `dead`, если ни один след не прошёл базовую планку кандидата (адрес + факт + источник); `prioritize_hypotheses` сортирует живые по измеренным `fit_score`/`evidence_score`, без выдуманных весов (используется будущим `reweight_hypotheses.py` из фазы 4, не движком напрямую).
 
-Первый живой `PeopleSearch`-коннектор подключён: `WebSearchPeopleSearch` (`web_people_search.py`) + `HttpSearxngWebSearchClient` (`web_search.py`). Источник URL — не платный поисковый API, а self-hosted метапоисковик (SearxNG-совместимый JSON-эндпоинт, `WEB_SEARCH_BASE_URL` в `.env`); дальше свой код: тематический фильтр по ключевым словам гипотезы → проверка публичности URL → свой fetch страницы → извлечение email по regex (телефон из тела страницы намеренно не извлекается — слишком шумно). `LeadGenerationEngine._generate_via_hypotheses` прогоняет каждую гипотезу от `build_hypotheses`, пишет каждый сырой след в `traces`, след без кандидата — в `rejected_traces`, кандидата — в `candidates` (cold/rejected), дедуплицирует один и тот же контакт между гипотезами за один прогон (иначе один человек уходил бы в CRM несколько раз). Существующая логика `candidate.py` (`accept_candidate_for_offer`) не менялась. `geo_radius` — явный параметр движка (`GeoRadius`, по умолчанию весь рынок США); автоматический вывод города/зоны клиента из брифа ещё не сделан.
+Первый живой `PeopleSearch`-коннектор подключён: `WebSearchPeopleSearch` (`web_people_search.py`) + `HttpSearxngWebSearchClient` (`web_search.py`). Источник URL — не платный поисковый API, а self-hosted метапоисковик (SearxNG-совместимый JSON-эндпоинт, `WEB_SEARCH_BASE_URL` в `.env`); дальше свой код: тематический фильтр по ключевым словам гипотезы → проверка публичности URL → свой fetch страницы → извлечение email по regex (телефон из тела страницы намеренно не извлекается — слишком шумно). `LeadGenerationEngine._generate_via_hypotheses` прогоняет каждую гипотезу от `build_hypotheses`, пишет каждый сырой след в `traces`, след без кандидата — в `rejected_traces`, кандидата — в `candidates` (cold/rejected), дедуплицирует один и тот же контакт между гипотезами за один прогон (иначе один человек уходил бы в CRM несколько раз). `candidate.py` (`accept_candidate_for_offer`) больше не требует дословной цитаты оффера в reason: fit — пересечение слов reason с услугой/аудиторией; reason, совпадающий verbatim с claim из брифа, отвергается как «оффер, дописанный к контакту». `geo_radius` — явный параметр движка (`GeoRadius`, по умолчанию весь рынок США); опциональный вывод зоны из брифа — `infer_geo_radius_from_brief` (ниже).
 
 Ограничение источника: реальный охват зависит от того, что вернёт конкретный SearxNG-инстанс (какие движки он агрегирует) — это конфигурация владельца, не код.
 

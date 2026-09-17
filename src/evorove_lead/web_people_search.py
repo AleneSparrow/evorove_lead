@@ -16,7 +16,7 @@ from urllib.parse import urlsplit
 from evorove_lead.crm_touch import EMAIL_RE
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
 from evorove_lead.search import PeopleHit, TraceFinding
-from evorove_lead.web_search import SearchHit, WebSearchClient, fetch_page_text
+from evorove_lead.web_search import SearchHit, WebSearchClient, client_from_env, fetch_page_text
 
 if TYPE_CHECKING:
     from evorove_lead.hypothesis import Hypothesis
@@ -113,6 +113,18 @@ def _on_topic(hypothesis: "Hypothesis", snippet: str) -> bool:
         return True
     folded = snippet.casefold()
     return any(word in folded for word in keywords)
+
+
+def hypothesis_search_from_env() -> WebSearchPeopleSearch | None:
+    """Live search is on only when the owner points `WEB_SEARCH_BASE_URL` at SearxNG.
+
+    No URL means the engine stays unconnected. Do not pretend a harvest ran.
+    """
+
+    client = client_from_env()
+    if client is None:
+        return None
+    return WebSearchPeopleSearch(client)
 
 
 class WebSearchPeopleSearch:
