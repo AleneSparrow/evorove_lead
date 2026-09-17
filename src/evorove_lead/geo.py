@@ -32,6 +32,14 @@ _LOCALITY_RE = re.compile(
     r"(?:,\s*([A-Z]{2}))?\b"
 )
 
+# This product's own board vocabulary (FOUNDATION.md's four CRM tabs:
+# Cold, In progress, Offer made, Done), capitalized as a feature name in a
+# business's own copy about itself -- not a real city. Real bug found
+# piloting evorove.com: "a person land in Cold" read as "in <the city
+# Cold>". Narrow and grounded in the product's own defined terms, not a
+# generic blacklist of English words.
+_NOT_A_PLACE = frozenset({"cold", "done"})
+
 
 def infer_geo_radius(materials: Sequence[DepositedMaterial]) -> GeoRadius:
     """The first capitalized "in/near/serving/based in/located in <Place>" hit.
@@ -41,9 +49,10 @@ def infer_geo_radius(materials: Sequence[DepositedMaterial]) -> GeoRadius:
     """
 
     for material in materials:
-        match = _LOCALITY_RE.search(material.body)
-        if match:
+        for match in _LOCALITY_RE.finditer(material.body):
             locality = match.group(1).strip()
+            if locality.casefold() in _NOT_A_PLACE:
+                continue
             state = match.group(2)
             return GeoRadius(locality=f"{locality}, {state}" if state else locality)
     return GeoRadius()

@@ -7,14 +7,45 @@ print a found person's email, phone, or reason. Counts only.
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 from evorove_lead.business import BusinessSeed
 from evorove_lead.engine import LeadGenerationEngine
-from evorove_lead.presence import HttpPresenceSource
+from evorove_lead.materials import DepositedMaterial, load_deposited_materials
+from evorove_lead.presence import HttpPresenceSource, PresenceSource
 from evorove_lead.web_people_search import hypothesis_search_from_env
 
 CLIENT_ZERO_SITE = "https://evorove.com"
 CLIENT_ZERO_ARCHETYPE = "software subscription"
+OWNER_MATERIALS_DIR = Path(__file__).resolve().parent.parent.parent / "owner-materials"
+
+
+class _WithOwnerMaterials:
+    """The live site, plus whatever the owner deposited in `owner-materials/`.
+
+    The live page is real, but its own marketing style (hero taglines,
+    FAQ headings) reads poorly for `offer_reader.py`'s plain-English
+    heuristics. This never replaces the live fetch -- it only adds
+    deposited files ahead of it, so a clean, ordinary sentence there can
+    stand as the offer's `what_we_sell` (used first) while the live page
+    still supplies its own audience mentions and price. An empty or
+    missing directory changes nothing: `owner-materials/` already exists
+    as an optional, git-tracked spot for this (see its own README).
+    """
+
+    def __init__(self, live: PresenceSource, materials_dir: Path) -> None:
+        self._live = live
+        self._materials_dir = materials_dir
+
+    def load(self, seed: BusinessSeed) -> tuple[DepositedMaterial, ...]:
+        deposited: tuple[DepositedMaterial, ...] = ()
+        if self._materials_dir.is_dir():
+            deposited = load_deposited_materials(self._materials_dir)
+        return deposited + self._live.load(seed)
+
+
+def client_zero_presence() -> PresenceSource:
+    return _WithOwnerMaterials(HttpPresenceSource(), OWNER_MATERIALS_DIR)
 
 
 def client_zero_seed() -> BusinessSeed:
@@ -51,9 +82,15 @@ def run_client_zero_search() -> dict[str, int | str]:
             "messages_sent": 0,
         }
     engine = LeadGenerationEngine(
-        presence=HttpPresenceSource(),
+        presence=client_zero_presence(),
         hypothesis_search=search,
-        infer_geo_radius_from_brief=True,
+        # Client 0 is a nationwide US SaaS product, not a local service
+        # business with one city or service area -- there is no real
+        # locality to infer here, only this product's own jargon
+        # ("CRM", "Cold") that a text heuristic can mistake for one (real
+        # bug found piloting this: "they land in CRM on Cold" read as a
+        # place). The honest geo_radius for client 0 is the whole US
+        # market, not a guess -- leave inference off (default `False`).
     )
     result = engine.generate(client_zero_seed())
     summary = search_summary(result)

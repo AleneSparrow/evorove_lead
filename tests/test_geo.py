@@ -48,6 +48,18 @@ def test_sign_in_nav_link_is_not_read_as_a_locality():
     assert radius.locality == ""
 
 
+def test_own_board_vocabulary_is_not_read_as_a_locality():
+    """Real bug found running the client-0 pilot: evorove.com's own copy
+    talks about its product ("a person land in Cold"), and this product's
+    own board tab name ("Cold") is not a city, even capitalized after
+    "in". Keeps checking the rest of the text instead of stopping there."""
+
+    radius = infer_geo_radius(
+        (_material("Only then does a person land in Cold. Based in Austin since 2015."),)
+    )
+    assert radius.locality == "Austin"
+
+
 def test_checks_materials_in_order_and_stops_at_first_hit():
     radius = infer_geo_radius(
         (
