@@ -36,6 +36,18 @@ def test_no_match_returns_whole_us_default():
     assert radius.country == "US"
 
 
+def test_sign_in_nav_link_is_not_read_as_a_locality():
+    """Real bug found running the first live client-0 pilot: a nav bar has
+    no separator between adjacent links ("...FAQ Sign in Start free
+    trial..."), so "in" from "Sign in" ran straight into "Start" from the
+    next button and read as a fabricated locality, "Start"."""
+
+    radius = infer_geo_radius(
+        (_material("FAQ Sign in Start free trial. Weekend catering for local events."),)
+    )
+    assert radius.locality == ""
+
+
 def test_checks_materials_in_order_and_stops_at_first_hit():
     radius = infer_geo_radius(
         (

@@ -175,6 +175,32 @@ def test_candidate_reason_rejects_the_offer_pasted_verbatim(tmp_path: Path) -> N
         )
 
 
+def test_candidate_fit_ignores_generic_business_vocabulary(tmp_path: Path) -> None:
+    """Real bug found running the first live client-0 pilot: evorove.com's
+    own FAQ copy grounds a "service" claim as its who_may_fit/what_we_sell
+    text, and "service" alone is common to nearly any business's page --
+    an unrelated tire shop or transmission shop passed the old word-overlap
+    check purely because it also talks about its "service"."""
+
+    (tmp_path / "service-line.txt").write_text(
+        "We offer catering as a service to your business.\n", encoding="utf-8"
+    )
+    materials = load_deposited_materials(tmp_path)
+    offer = accept_offer_understanding(
+        materials=materials,
+        what_we_sell=[GroundedClaim(text="catering", source_name="service-line.txt")],
+        who_may_fit=[GroundedClaim(text="your business", source_name="service-line.txt")],
+    )
+
+    with pytest.raises(CandidateRejected, match="not tied to the offer"):
+        accept_candidate_for_offer(
+            identity="555-0177",
+            reason="Front desk for a transmission shop's customer service line.",
+            reason_source="https://unrelated-transmission-shop.example",
+            offer=offer,
+        )
+
+
 def test_candidate_reason_need_not_quote_the_offer_verbatim(tmp_path: Path) -> None:
     """A real fact from the open web describes the person, not the brief's exact words."""
 

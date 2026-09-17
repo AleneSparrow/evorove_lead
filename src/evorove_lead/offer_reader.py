@@ -29,6 +29,13 @@ _AUDIENCE_TRIGGER = r"(?:for|serves|serving|help|helps|helping|works with)"
 _AUDIENCE_STOP_WORDS = (
     "in", "that", "who", "with", "we", "our", "and", "or", "but", "so",
     "since", "before", "after", "because", "while", "when", "if", "as",
+    # "you"/"your" mark self-referential filler ("for the service you
+    # sell", "for your convenience"), not a named audience segment. A real
+    # audience phrase names who the reader's customer is, never the
+    # reader themselves -- found piloting this against evorove.com's own
+    # FAQ copy, which is full of "you"/"your" describing the reader, not
+    # an audience to search for.
+    "you", "your",
 )
 _NOT_A_STOP_WORD = rf"(?!\b(?:{'|'.join(_AUDIENCE_STOP_WORDS)})\b)"
 _AUDIENCE_WORD = rf"{_NOT_A_STOP_WORD}[A-Za-z][A-Za-z']*"
@@ -58,12 +65,53 @@ def _is_negated_before(chunk: str, match_start: int) -> bool:
     return any(word.casefold() in _NEGATION_WORDS for word in preceding_words)
 
 
+def _is_shouting(text: str) -> bool:
+    """An ALL-CAPS line is a hero banner/CTA style, not a literal sentence.
+
+    Real bug found piloting evorove.com: its own H1 is "COLD IN. DONE ON
+    THE BOARD." -- a shouted tagline, not a description of the service --
+    and taking it verbatim as `what_we_sell` seeded search queries and a
+    fit-check vocabulary from ordinary English words ("cold", "board",
+    "done") that collide with completely unrelated pages, not the offer.
+    """
+
+    letters = [character for character in text if character.isalpha()]
+    if len(letters) < 4:
+        return False
+    upper = sum(1 for character in letters if character.isupper())
+    return upper / len(letters) > 0.8
+
+
+_MIN_SERVICE_LINE_WORDS = 4
+# A real heading or tagline is short. `page_material` puts each heading and
+# the page <title> on its own line *before* the full page body -- but that
+# final body line is the page's whole running text, long enough that it
+# would never plausibly be a single heading. Bounding candidates to
+# heading-length keeps this fallback inside the heading/title lines it is
+# meant for, instead of spilling into that body blob.
+_MAX_SERVICE_LINE_CHARS = 120
+
+
 def _first_line(body: str) -> str:
-    for line in body.splitlines():
-        text = line.strip()
-        if text:
+    """The first line worth reading as a plain sentence, skipping shouted or bare ones.
+
+    Prefers the first non-shouting heading/title line with enough words
+    to be a real sentence -- not a full-caps hero tagline, and not just
+    the page <title> (often only the business's own name, one or two
+    words, once the tagline is skipped). Falls back to the literal first
+    line if nothing qualifies, so a real all-caps or terse site still
+    gets an offer instead of none at all.
+    """
+
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    for text in lines:
+        if (
+            len(text) <= _MAX_SERVICE_LINE_CHARS
+            and not _is_shouting(text)
+            and len(_WORD_RE.findall(text)) >= _MIN_SERVICE_LINE_WORDS
+        ):
             return text
-    return ""
+    return lines[0] if lines else ""
 
 
 def _service_phrase(heading: str) -> str:
@@ -72,16 +120,44 @@ def _service_phrase(heading: str) -> str:
     return service if len(service) >= 3 else heading
 
 
+# A sentence phrased as a question ("What does Done mean for an offline
+# business?") is an FAQ heading about the product, not a declaration of
+# who the offer is for -- matching "for X" inside one produces an
+# audience phrase that is really a fragment of the question. Found
+# piloting against evorove.com's own FAQ-heavy copy, where several FAQ
+# headings otherwise outscored the page's one real audience mention.
+_QUESTION_RE = re.compile(r"[^.!?\n]*\?")
+
+# Words that only restate the offer itself ("for the service you sell",
+# "for your product") rather than naming who it is for. A phrase built
+# entirely from these words is filler, not an audience.
+_GENERIC_AUDIENCE_FILLER_WORDS = frozenset({"the", "a", "an", "your", "you", "service", "product", "sell", "offer"})
+
+
+def _is_generic_filler(phrase: str) -> bool:
+    words = {word.casefold() for word in _WORD_RE.findall(phrase)}
+    if bool(words) and words <= _GENERIC_AUDIENCE_FILLER_WORDS:
+        return True
+    # "Cold is people found in the open field -- not visitors who already
+    # filled your form" (the contract's own words): a phrase describing
+    # the reader's own site visitors is the one audience this product is
+    # explicitly not allowed to search for, so it is never a real
+    # audience claim even when grammatically "for X".
+    return "site" in words or "visitor" in words or "visitors" in words
+
+
 def _audience_phrases(body: str) -> tuple[str, ...]:
     found: list[str] = []
     seen: set[str] = set()
-    for chunk in re.split(r"[\n.]+", body):
+    for chunk in re.split(r"[\n.]+", _QUESTION_RE.sub(" ", body)):
         for match in FOR_PATTERN.finditer(chunk):
             phrase = match.group(1).strip(" -,")
             key = phrase.casefold()
             if len(phrase) < 3 or key in seen:
                 continue
             if _is_negated_before(chunk, match.start()):
+                continue
+            if _is_generic_filler(phrase):
                 continue
             seen.add(key)
             found.append(phrase)

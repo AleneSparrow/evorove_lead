@@ -16,6 +16,25 @@ if TYPE_CHECKING:
 
 _WORD_RE = re.compile(r"[A-Za-z']{4,}")
 
+# Words common to almost any business's own copy, regardless of what it
+# actually sells -- "service", "offer", "customer", and the like. Counting
+# these as a fit signal means a random unrelated business's page (a tire
+# shop's, a transmission shop's) matches *any* offer, because it also
+# talks about its "service" or its "customers". Found piloting the first
+# live search on evorove.com: its own FAQ copy is built from this exact
+# generic business vocabulary, so its `who_may_fit`/`what_we_sell` claims
+# picked up "service" -- and that alone made unrelated small-business
+# pages from the open web look like a fit. A real fit needs overlap on a
+# word specific enough to name what is actually being sold or who it is
+# for.
+_GENERIC_FIT_WORDS = frozenset(
+    {
+        "service", "services", "business", "businesses", "company", "companies",
+        "product", "products", "sell", "sells", "selling", "offer", "offers",
+        "offering", "customer", "customers", "client", "clients",
+    }
+)
+
 
 class CandidateRejected(ValueError):
     """A record is not a cycle-1 candidate."""
@@ -54,8 +73,9 @@ def accept_candidate(*, identity: str, reason: str, reason_source: str) -> Candi
     )
 
 
-def _keywords(text: str) -> frozenset[str]:
-    return frozenset(match.casefold() for match in _WORD_RE.findall(text or ""))
+def _keywords(text: str, *, drop_generic: bool = False) -> frozenset[str]:
+    words = frozenset(match.casefold() for match in _WORD_RE.findall(text or ""))
+    return words - _GENERIC_FIT_WORDS if drop_generic else words
 
 
 def _is_offer_text_pasted_as_reason(reason: str, claims: tuple) -> bool:

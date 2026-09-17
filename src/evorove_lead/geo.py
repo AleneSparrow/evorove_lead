@@ -18,9 +18,16 @@ from evorove_lead.hypothesis import GeoRadius
 from evorove_lead.materials import DepositedMaterial
 
 # Capitalized so "in town", "in fact", "in 2020" (lowercase or digits)
-# don't match -- a real city name is written capitalized.
+# don't match -- a real city name is written capitalized. The negative
+# lookbehind for "sign "/"log " excludes "Sign in", "Log in" -- a nav-bar
+# link, not a locality preposition. Real bug found piloting evorove.com:
+# its header text has no separator between adjacent nav links ("...FAQ
+# Sign in Start free trial..."), so "in" (from "Sign in") followed
+# straight into "Start" (from the "Start free trial" button) read as
+# "in Start" -- a fabricated city that never existed on the page as a
+# sentence.
 _LOCALITY_RE = re.compile(
-    r"\b(?:[Ii]n|[Nn]ear|[Ss]erving|[Bb]ased in|[Ll]ocated in)\s+"
+    r"\b(?<![Ss]ign )(?<![Ll]og )(?:[Ii]n|[Nn]ear|[Ss]erving|[Bb]ased in|[Ll]ocated in)\s+"
     r"([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2})"
     r"(?:,\s*([A-Z]{2}))?\b"
 )
