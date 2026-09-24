@@ -230,3 +230,17 @@ class HypothesisPatternLibraryRow(Base):
         ),
         CheckConstraint("sample_size >= 0", name="ck_hypothesis_pattern_library_sample_nonnegative"),
     )
+
+
+class SearchTargetRow(Base):
+    """The site one business asked cycle 1 to search for (step 20). One per tenant."""
+
+    __tablename__ = "search_targets"
+
+    business_id = Column(String(128), primary_key=True)
+    site_url = Column(Text, nullable=False)
+    business_archetype = Column(String(128), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    last_run_at = Column(DateTime(timezone=True), nullable=True)
+    last_status = Column(String(32), nullable=False, default="queued")
+    last_cold = Column(Integer, nullable=False, default=0)
