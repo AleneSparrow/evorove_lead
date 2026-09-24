@@ -115,7 +115,7 @@ def test_connector_falls_back_to_a_strictly_formatted_phone_number():
 
     assert findings[0].hit is not None
     assert findings[0].hit.identity == "4155550134"
-    assert findings[0].hit.channel == "sms"
+    assert findings[0].hit.channel == "phone"
 
 
 def test_connector_ignores_zip_plus_four_and_prices_as_phone_numbers():

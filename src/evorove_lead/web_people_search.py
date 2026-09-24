@@ -120,7 +120,7 @@ class WebSearchPeopleSearch:
                 identity=phone,
                 observed_fact=excerpt,
                 observed_source=search_hit.url,
-                channel="sms",
+                channel="phone",  # never texted cold (TCPA)
             )
             return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit)
 
