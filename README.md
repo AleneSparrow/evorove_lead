@@ -42,6 +42,30 @@ drops -- no name, contact, or message text; the request schema has no field
 for one. Feeds the warehouse's `hypothesis_outcomes` table for a future
 reweighting job, not `LeadGenerationEngine` itself.
 
+## Search trigger (step 20)
+
+The owner pastes her site on the CRM board and presses **Find people**. The
+CRM calls this service; nobody runs the CLI by hand.
+
+- `POST /api/v1/internal/searches` `{business_id, site_url}` -- remembers the
+  site for this business and runs cycle 1 in the background (open web through
+  `WEB_SEARCH_BASE_URL`, geo read from the brief). 503 when search is not
+  connected, 422 for a private/invalid URL.
+- `GET /api/v1/internal/searches/{business_id}` -- last status and how many
+  people went to Cold.
+- `POST /api/v1/internal/searches/run-due` -- the daily cron: re-runs every
+  remembered site not run in the last 20 hours. People already on the board
+  are not sent again.
+
+All three need `X-Internal-Task-Secret` (same `INTERNAL_TASK_SECRET` as the CRM
+and cycle 2).
+
+Deploy: one web service from this repo (the Dockerfile runs migrations and
+`uvicorn evorove_lead.api:app`) with `DATABASE_URL`, `INTERNAL_TASK_SECRET`,
+`CRM_BASE_URL` and `WEB_SEARCH_BASE_URL`; a SearxNG service with the JSON
+format enabled for `WEB_SEARCH_BASE_URL`; a daily cron that POSTs
+`run-due`. In the CRM set `EVOROVE_LEAD_BASE_URL` to this service's origin.
+
 ## Local setup
 
 - `pip install -e .[dev]`, then `python -m playwright install chromium` --
