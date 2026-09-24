@@ -491,7 +491,7 @@ def _candidate_to_record(
         business_id=business_id,
         hypothesis_id=hypothesis_id,
         identity=candidate.identity,
-        channel="email" if email else "sms" if phone else "unknown",
+        channel="email" if email else "phone" if phone else "unknown",
         reason=candidate.reason,
         reason_source=candidate.reason_source,
         fit=1.0,

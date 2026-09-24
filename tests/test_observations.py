@@ -108,3 +108,18 @@ def test_connected_search_returns_deposited_hits(tmp_path: Path) -> None:
     hits = search.find(offer)
     assert len(hits) == 1
     assert hits[0].identity.startswith("Sam Rivera")
+
+
+def test_phone_only_person_is_never_marked_for_sms() -> None:
+    """Roadmap step 17: cold people are not texted; old "sms" deposits become "phone"."""
+    hit = observation_to_hit(
+        {
+            "name": "Dana",
+            "phone": "+1 312 555 0190",
+            "observed_fact": "Asked on a forum who fixes AC this week.",
+            "observed_source": "owner-copied public post",
+            "channel": "sms",
+        }
+    )
+    assert hit is not None and hit.channel == "phone"
+    assert observation_to_hit({**{"phone": "+13125550190", "observed_fact": "x", "observed_source": "y"}, "channel": "phone"}).channel == "phone"

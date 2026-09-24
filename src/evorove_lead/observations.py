@@ -16,7 +16,11 @@ from evorove_lead.search import PeopleHit
 
 SKIP_NAMES = frozenset({"README.md", "README.txt", ".gitkeep"})
 ALLOWED_SUFFIXES = frozenset({".jsonl"})
-ALLOWED_CHANNELS = frozenset({"sms", "email"})
+ALLOWED_CHANNELS = frozenset({"email", "phone"})
+# Cold people are never texted (TCPA): a phone-only person is kept on Cold
+# with channel "phone" -- the owner may call; cycle 2 writes only by email.
+# Older deposit files that still say "sms" mean the same thing.
+_LEGACY_CHANNELS = {"sms": "phone"}
 
 
 class ObservationRejected(ValueError):
@@ -66,6 +70,7 @@ def observation_to_hit(record: object) -> PeopleHit | None:
     observed_fact = _optional_text(record.get("observed_fact"))
     observed_source = _optional_text(record.get("observed_source"))
     channel = _optional_text(record.get("channel")).casefold()
+    channel = _LEGACY_CHANNELS.get(channel, channel)
     name = _optional_text(record.get("name"))
     email = _normalize_email(_optional_text(record.get("email")))
     phone = _normalize_phone(_optional_text(record.get("phone")))
@@ -75,7 +80,7 @@ def observation_to_hit(record: object) -> PeopleHit | None:
         return None
     if channel == "email" and not email:
         return None
-    if channel == "sms" and not phone:
+    if channel == "phone" and not phone:
         return None
     return PeopleHit(
         identity=compose_observation_identity(
