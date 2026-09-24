@@ -1,0 +1,9 @@
+.git
+.env
+.env.*
+.venv
+**/__pycache__
+*.egg-info
+owner-observations/*.jsonl
+owner-materials/*
+!owner-materials/README.md
