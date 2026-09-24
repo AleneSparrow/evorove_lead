@@ -369,11 +369,11 @@ def test_engine_runs_the_full_hypothesis_pipeline_to_cold() -> None:
     assert result.handoffs[0].reason_source == "https://forum.example/thread/1"
 
     # One brief snapshot, one hypothesis row per built hypothesis (2
-    # demographic audiences + public_ask + need_statement = 4), every raw
-    # trace recorded regardless of fate.
+    # demographic audiences + 2 B2B business listings + public_ask +
+    # need_statement = 6), every raw trace recorded regardless of fate.
     assert len(warehouse.briefs) == 1
-    assert len(warehouse.hypotheses) == 4
-    assert len(warehouse.traces) == 5
+    assert len(warehouse.hypotheses) == 6
+    assert len(warehouse.traces) == 7  # one per other hypothesis (5) + two from need_statement
     reject_reasons = {t.reason for t in warehouse.rejected_traces}
     assert "no email address found on the page" in reject_reasons
     assert any("not about" in r for r in reject_reasons)

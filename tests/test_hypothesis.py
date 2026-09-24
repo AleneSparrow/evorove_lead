@@ -57,7 +57,7 @@ def test_build_hypotheses_has_at_least_two_intent_trigger_hypotheses():
 
     hypotheses = build_hypotheses(offer, GeoRadius())
 
-    trigger_kinds = {h.intent_trigger.kind for h in hypotheses} - {"demographic_fit"}
+    trigger_kinds = {h.intent_trigger.kind for h in hypotheses} - {"demographic_fit", "business_listing"}
     assert trigger_kinds == {"public_ask", "need_statement"}
     for hypothesis in hypotheses:
         if hypothesis.intent_trigger.kind in trigger_kinds:
