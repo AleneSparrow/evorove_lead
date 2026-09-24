@@ -63,8 +63,9 @@ and cycle 2).
 Deploy: one web service from this repo (the Dockerfile runs migrations and
 `uvicorn evorove_lead.api:app`) with `DATABASE_URL`, `INTERNAL_TASK_SECRET`,
 `CRM_BASE_URL` and `WEB_SEARCH_BASE_URL`; a SearxNG service with the JSON
-format enabled for `WEB_SEARCH_BASE_URL`; a daily cron that POSTs
-`run-due`. In the CRM set `EVOROVE_LEAD_BASE_URL` to this service's origin.
+format enabled for `WEB_SEARCH_BASE_URL` (build `searxng/Dockerfile`, keep it
+private); a daily cron -- either POST `run-due`, or a cron service from this
+repo with start command `python -m evorove_lead.searches`. In the CRM set `EVOROVE_LEAD_BASE_URL` to this service's origin.
 
 ## Local setup
 

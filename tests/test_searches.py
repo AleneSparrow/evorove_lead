@@ -88,3 +88,16 @@ def test_sqlalchemy_store_round_trip(tmp_path) -> None:
     client, _ = _client(FakeEngine(cold=1), targets=store)
     assert client.post("/api/v1/internal/searches/run-due", headers=HEADERS).json() == {"ran": 1, "cold": 1}
     assert store.due(now) == ()
+
+
+def test_cron_command_runs_due_sites(monkeypatch, capsys) -> None:
+    from evorove_lead import searches
+
+    store = InMemorySearchTargetStore()
+    store.save(SearchTarget("tenant-a", "https://acme.com/", "", datetime.now(timezone.utc)))
+    monkeypatch.setattr(searches, "search_targets_from_env", lambda: store)
+    monkeypatch.setattr(searches, "live_engine", lambda: FakeEngine(cold=2))
+    assert searches.main() == 0
+    assert '"cold": 2' in capsys.readouterr().out
+    monkeypatch.setattr(searches, "live_engine", lambda: None)
+    assert searches.main() == 1

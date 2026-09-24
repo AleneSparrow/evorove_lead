@@ -151,6 +151,24 @@ def run_due(store: SearchTargetStore, engine: LeadGenerationEngine, now: datetim
     return {"ran": ran, "cold": cold}
 
 
+def main() -> int:
+    """Daily cron entry point: `python -m evorove_lead.searches`."""
+
+    import json
+    import sys
+
+    engine = live_engine()
+    if engine is None:
+        print(json.dumps({"error": "people search is not connected (WEB_SEARCH_BASE_URL)"}), file=sys.stderr)
+        return 1
+    print(json.dumps(run_due(search_targets_from_env(), engine)))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+
 __all__ = [
     "GenerationStatus",
     "InMemorySearchTargetStore",
