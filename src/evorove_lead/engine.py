@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from enum import Enum
 
 from evorove_lead.business import BusinessSeed
-from evorove_lead.candidate import Candidate, CandidateRejected, accept_candidate_for_offer
+from evorove_lead.candidate import Candidate, CandidateRejected, accept_candidate
+from evorove_lead.selection import Selection, SelectionProfile, select
 from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.geo import infer_geo_radius
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, build_hypotheses, verify_hypothesis
@@ -147,6 +148,8 @@ class LeadGenerationEngine:
             )
 
         hypothesis_id = self._record_brief_and_hypothesis(seed, offer)
+        profile = SelectionProfile.from_offer(offer, materials)
+        seen_identities = self._already_handed_over(seed.business_id)
 
         accepted: list[Candidate] = []
         handoffs: list[Cycle1Handoff] = []
@@ -155,7 +158,8 @@ class LeadGenerationEngine:
             if hypothesis_id:
                 self._warehouse.save_trace(_hit_to_trace_record(seed.business_id, hypothesis_id, hit))
             try:
-                candidate = _accept_hit(hit, offer)
+                candidate, selection = _accept_hit(hit, profile)
+                _not_seen_before(candidate, seen_identities)
             except CandidateRejected as exc:
                 rejected.append(RejectedHit(identity=hit.identity, why=str(exc)))
                 if hypothesis_id:
@@ -178,7 +182,9 @@ class LeadGenerationEngine:
             handoffs.append(handoff)
             if hypothesis_id:
                 self._warehouse.save_candidate(
-                    _candidate_to_record(seed.business_id, hypothesis_id, candidate, email=email, phone=phone)
+                    _candidate_to_record(
+                        seed.business_id, hypothesis_id, candidate, email=email, phone=phone, selection=selection
+                    )
                 )
             if seed.business_id and (phone or email):
                 self._lead_touch_sink.publish(
@@ -234,6 +240,11 @@ class LeadGenerationEngine:
         )
         return hypothesis_id
 
+    def _already_handed_over(self, business_id: str) -> set[str]:
+        if not business_id:
+            return set()
+        return {identity.strip().casefold() for identity in self._warehouse.accepted_identities(business_id)}
+
     def _resolve_geo_radius(self, materials: tuple[DepositedMaterial, ...]) -> GeoRadius:
         if self._explicit_geo_radius is not None:
             return self._explicit_geo_radius
@@ -277,8 +288,10 @@ class LeadGenerationEngine:
         rejected: list[RejectedHit] = []
         # Different hypotheses can turn up the same public post -- one
         # person addressed once, not once per hypothesis that noticed them
-        # (contract: "его ещё нет на доске... с тем же контактом").
-        seen_identities: set[str] = set()
+        # (contract: "его ещё нет на доске... с тем же контактом"), and
+        # nobody already handed to the board by an earlier run (step 19).
+        seen_identities = self._already_handed_over(business_id)
+        profile = SelectionProfile.from_offer(offer, materials)
         hypotheses = build_hypotheses(
             offer,
             self._resolve_geo_radius(materials),
@@ -310,7 +323,7 @@ class LeadGenerationEngine:
                     continue
                 hit = finding.hit
                 try:
-                    candidate = _accept_hit(hit, offer)
+                    candidate, selection = _accept_hit(hit, profile)
                 except CandidateRejected as exc:
                     rejected.append(RejectedHit(identity=hit.identity, why=str(exc)))
                     if hypothesis_id:
@@ -328,7 +341,7 @@ class LeadGenerationEngine:
                                 business_id,
                                 hypothesis_id,
                                 hit,
-                                "duplicate contact already accepted this run",
+                                "duplicate contact already handed to the board",
                             )
                         )
                     continue
@@ -347,7 +360,7 @@ class LeadGenerationEngine:
                 if hypothesis_id:
                     self._warehouse.save_candidate(
                         _candidate_to_record(
-                            business_id, hypothesis_id, candidate, email=email, phone=phone
+                            business_id, hypothesis_id, candidate, email=email, phone=phone, selection=selection
                         )
                     )
                 if business_id and (phone or email):
@@ -456,13 +469,26 @@ def _finding_to_rejected_trace_record(
     )
 
 
-def _accept_hit(hit: PeopleHit, offer: OfferUnderstanding) -> Candidate:
-    return accept_candidate_for_offer(
-        identity=hit.identity,
-        reason=hit.observed_fact,
-        reason_source=hit.observed_source,
-        offer=offer,
+def _accept_hit(hit: PeopleHit, profile: SelectionProfile) -> tuple[Candidate, Selection]:
+    """Candidate floor (identity + reason + source), then fit / evidence / addressable."""
+
+    candidate = accept_candidate(
+        identity=hit.identity, reason=hit.observed_fact, reason_source=hit.observed_source
     )
+    _, phone, email = split_identity(candidate.identity)
+    selection = select(
+        candidate.reason, profile, addressable=bool(phone or email), source_kind=hit.source_kind
+    )
+    if not selection.accepted:
+        raise CandidateRejected(selection.why)
+    return candidate, selection
+
+
+def _not_seen_before(candidate: Candidate, seen: set[str]) -> None:
+    key = candidate.identity.strip().casefold()
+    if key in seen:
+        raise CandidateRejected("duplicate contact already handed to the board")
+    seen.add(key)
 
 
 def _hit_to_trace_record(business_id: str, hypothesis_id: str, hit: PeopleHit) -> TraceRecord:
@@ -485,6 +511,7 @@ def _candidate_to_record(
     *,
     email: str | None,
     phone: str | None,
+    selection: Selection | None = None,
 ) -> CandidateRecord:
     return CandidateRecord(
         id=new_id("candidate"),
@@ -494,8 +521,8 @@ def _candidate_to_record(
         channel="email" if email else "phone" if phone else "unknown",
         reason=candidate.reason,
         reason_source=candidate.reason_source,
-        fit=1.0,
-        evidence=1.0,
+        fit=selection.fit if selection else 1.0,
+        evidence=selection.evidence if selection else 1.0,
         addressable=bool(email or phone),
         decision="cold",
         decided_at=datetime.now(timezone.utc),

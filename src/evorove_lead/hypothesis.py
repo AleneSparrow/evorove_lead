@@ -28,6 +28,7 @@ INTENT_TRIGGER_KINDS = (
     "competitor_complaint",
     "need_statement",
     "demographic_fit",
+    "business_listing",
 )
 
 
@@ -36,6 +37,8 @@ class IntentTrigger:
     """Why a person surfaced by this hypothesis might belong here.
 
     `demographic_fit` is a profile guess: they look like the named audience.
+    `business_listing` is B2B (step 18): companies of the named kind in the
+    client's area, found through their own websites.
     The other three are signals that someone has an open need right now.
     """
 
@@ -140,6 +143,23 @@ def build_hypotheses(
                 intent_trigger=IntentTrigger(
                     kind="demographic_fit",
                     description=f"Named in the brief as who this may fit: {claim.text}",
+                ),
+                geo_radius=geo_radius,
+            )
+        )
+
+    for claim in offer.who_may_fit:
+        # B2B: the audience itself may be a kind of business ("restaurants",
+        # "dental practices"). Their own sites are looked up by niche + area;
+        # selection.py keeps only the ones that fit and are not competitors.
+        hypotheses.append(
+            Hypothesis(
+                audience_segment=claim.text,
+                channel="web_search",
+                query_template=f"{claim.text}{geo_suffix or ' in the US'}".strip(),
+                intent_trigger=IntentTrigger(
+                    kind="business_listing",
+                    description=f"Businesses of the kind the brief serves: {claim.text}",
                 ),
                 geo_radius=geo_radius,
             )

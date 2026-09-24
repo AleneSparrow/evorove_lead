@@ -133,6 +133,10 @@ class AnalysisWarehouse(Protocol):
         self, business_id: str, hypothesis_id: str
     ) -> Sequence[CandidateRecord]: ...
 
+    def accepted_identities(self, business_id: str) -> Sequence[str]:
+        """Every identity already handed to the board as Cold (step 19 dedup)."""
+        ...
+
     def save_hypothesis_outcome(self, record: HypothesisOutcomeRecord) -> None: ...
 
     def list_hypothesis_outcomes(
@@ -173,6 +177,9 @@ class NullAnalysisWarehouse:
     def list_candidates(
         self, business_id: str, hypothesis_id: str
     ) -> Sequence[CandidateRecord]:
+        return ()
+
+    def accepted_identities(self, business_id: str) -> Sequence[str]:
         return ()
 
     def save_hypothesis_outcome(self, record: HypothesisOutcomeRecord) -> None:
@@ -244,6 +251,9 @@ class RecordingAnalysisWarehouse:
             for r in self.candidates
             if r.business_id == business_id and r.hypothesis_id == hypothesis_id
         )
+
+    def accepted_identities(self, business_id: str) -> Sequence[str]:
+        return tuple(r.identity for r in self.candidates if r.business_id == business_id and r.decision == "cold")
 
     def save_hypothesis_outcome(self, record: HypothesisOutcomeRecord) -> None:
         self.hypothesis_outcomes.append(record)

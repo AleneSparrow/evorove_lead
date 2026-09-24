@@ -19,6 +19,9 @@ class PeopleHit:
     observed_fact: str
     observed_source: str
     channel: str = ""
+    # "person": someone's own public post or an owner observation.
+    # "business": a company's own website found by a B2B query (step 18).
+    source_kind: str = "person"
 
 
 class PeopleSearch(Protocol):

@@ -58,15 +58,20 @@ def accept_candidate_for_offer(
     reason_source: str,
     offer: OfferUnderstanding,
 ) -> Candidate:
-    """Accept a candidate whose reason is tied to the understood offer."""
+    """Accept a candidate whose reason is tied to the understood offer.
+
+    Uses the same fit / evidence re-selection as the engine (selection.py),
+    with only the offer's own claims as vocabulary.
+    """
 
     candidate = accept_candidate(
         identity=identity,
         reason=reason,
         reason_source=reason_source,
     )
-    folded_reason = candidate.reason.casefold()
-    claims = (*offer.what_we_sell, *offer.who_may_fit)
-    if not any(claim.text.casefold() in folded_reason for claim in claims):
-        raise CandidateRejected("reason is not tied to the offer")
+    from evorove_lead.selection import SelectionProfile, select
+
+    selection = select(candidate.reason, SelectionProfile.from_offer(offer), addressable=True)
+    if not selection.accepted:
+        raise CandidateRejected(selection.why)
     return candidate

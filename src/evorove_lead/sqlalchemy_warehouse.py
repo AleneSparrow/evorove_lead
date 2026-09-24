@@ -305,6 +305,16 @@ class SqlAlchemyAnalysisWarehouse:
             )
             return tuple(_candidate_from_row(row) for row in rows)
 
+    def accepted_identities(self, business_id: str):
+        with self._session_factory() as session:
+            return tuple(
+                session.scalars(
+                    select(CandidateRow.identity).where(
+                        CandidateRow.business_id == business_id, CandidateRow.decision == "cold"
+                    )
+                )
+            )
+
     def save_hypothesis_outcome(self, record: HypothesisOutcomeRecord) -> None:
         with self._session_factory() as session:
             session.merge(_outcome_to_row(record))
