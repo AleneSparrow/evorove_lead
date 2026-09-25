@@ -7,33 +7,11 @@ This module does not find people or contact them.
 
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from evorove_lead.offer import OfferUnderstanding
-
-_WORD_RE = re.compile(r"[A-Za-z']{4,}")
-
-# Words common to almost any business's own copy, regardless of what it
-# actually sells -- "service", "offer", "customer", and the like. Counting
-# these as a fit signal means a random unrelated business's page (a tire
-# shop's, a transmission shop's) matches *any* offer, because it also
-# talks about its "service" or its "customers". Found piloting the first
-# live search on evorove.com: its own FAQ copy is built from this exact
-# generic business vocabulary, so its `who_may_fit`/`what_we_sell` claims
-# picked up "service" -- and that alone made unrelated small-business
-# pages from the open web look like a fit. A real fit needs overlap on a
-# word specific enough to name what is actually being sold or who it is
-# for.
-_GENERIC_FIT_WORDS = frozenset(
-    {
-        "service", "services", "business", "businesses", "company", "companies",
-        "product", "products", "sell", "sells", "selling", "offer", "offers",
-        "offering", "customer", "customers", "client", "clients",
-    }
-)
 
 
 class CandidateRejected(ValueError):
@@ -73,24 +51,6 @@ def accept_candidate(*, identity: str, reason: str, reason_source: str) -> Candi
     )
 
 
-def _keywords(text: str, *, drop_generic: bool = False) -> frozenset[str]:
-    words = frozenset(match.casefold() for match in _WORD_RE.findall(text or ""))
-    return words - _GENERIC_FIT_WORDS if drop_generic else words
-
-
-def _is_offer_text_pasted_as_reason(reason: str, claims: tuple) -> bool:
-    """Reject the offer's own slogan standing in for a fact about this person.
-
-    A candidate whose "reason" is just a claim from the brief, verbatim, is
-    not a concrete fact about *this* person's situation -- it is the
-    client's own text pasted next to a contact, the exact dump the contract
-    calls out ("дописанный оффер к телефону").
-    """
-
-    folded_reason = reason.casefold().strip()
-    return any(claim.text.casefold().strip() == folded_reason for claim in claims)
-
-
 def accept_candidate_for_offer(
     *,
     identity: str,
@@ -109,6 +69,11 @@ def accept_candidate_for_offer(
         reason=reason,
         reason_source=reason_source,
     )
+    claims = (*offer.what_we_sell, *offer.who_may_fit)
+    folded_reason = candidate.reason.casefold().strip()
+    if any(claim.text.casefold().strip() == folded_reason for claim in claims):
+        raise CandidateRejected("reason is the offer's own text, not a fact about this person")
+
     from evorove_lead.selection import SelectionProfile, select
 
     selection = select(candidate.reason, SelectionProfile.from_offer(offer), addressable=True)

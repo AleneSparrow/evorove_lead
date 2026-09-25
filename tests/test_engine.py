@@ -225,14 +225,21 @@ def test_engine_reports_assembled_people_to_crm_sink() -> None:
 
 
 def test_sink_from_env_needs_url_and_secret(monkeypatch) -> None:
-    from evorove_lead.crm_touch import HttpCrmLeadTouchSink, NullLeadTouchSink, sink_from_env
+    from evorove_lead.crm_touch import (
+        HttpCrmLeadTouchSink,
+        NullLeadTouchSink,
+        OutboxCrmLeadTouchSink,
+        sink_from_env,
+    )
 
     monkeypatch.delenv("CRM_BASE_URL", raising=False)
     monkeypatch.delenv("INTERNAL_TASK_SECRET", raising=False)
     assert isinstance(sink_from_env(), NullLeadTouchSink)
     monkeypatch.setenv("CRM_BASE_URL", "http://crm.example")
     monkeypatch.setenv("INTERNAL_TASK_SECRET", "local_development_only")
-    assert isinstance(sink_from_env(), HttpCrmLeadTouchSink)
+    sink = sink_from_env()
+    assert isinstance(sink, OutboxCrmLeadTouchSink)
+    assert isinstance(sink._http, HttpCrmLeadTouchSink)
 
 
 def test_engine_writes_traces_and_rejections_to_its_own_warehouse_not_crm() -> None:

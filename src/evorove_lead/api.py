@@ -35,7 +35,8 @@ from evorove_lead.searches import (
     search_targets_from_env,
 )
 
-from evorove_lead.sqlalchemy_warehouse import warehouse_from_env
+from evorove_lead.crm_touch import CrmDeliveryStore, http_sink_from_env, redeliver_pending
+from evorove_lead.sqlalchemy_warehouse import crm_delivery_store_from_env, warehouse_from_env
 from evorove_lead.warehouse import AnalysisWarehouse, HypothesisOutcomeRecord, new_id
 
 OUTCOME_VALUES = ("done", "dropped", "offer_made", "in_progress")
@@ -79,10 +80,12 @@ def create_app(
     *,
     targets: SearchTargetStore | None = None,
     engine_factory: EngineFactory | None = None,
+    delivery_store: CrmDeliveryStore | None = None,
 ) -> FastAPI:
     app = FastAPI(title="evorove_lead internal API")
     store = warehouse if warehouse is not None else warehouse_from_env()
     search_targets = targets if targets is not None else search_targets_from_env()
+    deliveries = delivery_store if delivery_store is not None else crm_delivery_store_from_env()
     make_engine = engine_factory or live_engine
 
     def _engine_or_503():
@@ -136,6 +139,24 @@ def create_app(
     ) -> dict[str, int]:
         _require_task_secret(x_internal_task_secret)
         return run_due(search_targets, _engine_or_503())
+
+    @app.get("/api/v1/internal/crm-deliveries/status")
+    def crm_delivery_status(
+        x_internal_task_secret: Annotated[str | None, Header()] = None,
+    ) -> dict[str, int]:
+        _require_task_secret(x_internal_task_secret)
+        return {"pending": deliveries.pending_count()}
+
+    @app.post("/api/v1/internal/crm-deliveries/flush")
+    def crm_delivery_flush(
+        x_internal_task_secret: Annotated[str | None, Header()] = None,
+    ) -> dict[str, int]:
+        _require_task_secret(x_internal_task_secret)
+        http = http_sink_from_env()
+        redelivered = 0
+        if http is not None:
+            redelivered, _ = redeliver_pending(http, deliveries)
+        return {"redelivered": redelivered, "pending": deliveries.pending_count()}
 
     @app.post("/api/v1/internal/hypothesis-outcomes", status_code=202)
     def record_hypothesis_outcome(

@@ -244,3 +244,26 @@ class SearchTargetRow(Base):
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_status = Column(String(32), nullable=False, default="queued")
     last_cold = Column(Integer, nullable=False, default=0)
+
+
+class CrmDeliveryRow(Base):
+    """Outbox queue: CRM lead-touches CRM has not accepted yet.
+
+    A row exists only while undelivered -- deleted once CRM accepts the
+    touch. CRM dedupes replays of the same touch_id, so redelivery is safe.
+    """
+
+    __tablename__ = "crm_deliveries"
+
+    id = Column(String(128), primary_key=True)
+    business_id = Column(String(128), nullable=False)
+    touch_id = Column(String(128), nullable=False)
+    payload = Column(JSON_VALUE, nullable=False)
+    attempts = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    updated_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("business_id", "touch_id", name="uq_crm_deliveries_business_touch"),
+    )

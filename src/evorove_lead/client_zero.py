@@ -13,6 +13,7 @@ from evorove_lead.business import BusinessSeed
 from evorove_lead.engine import LeadGenerationEngine
 from evorove_lead.materials import DepositedMaterial, load_deposited_materials
 from evorove_lead.presence import HttpPresenceSource, PresenceSource
+from evorove_lead.sqlalchemy_warehouse import flush_crm_deliveries_from_env
 from evorove_lead.web_people_search import hypothesis_search_from_env
 
 CLIENT_ZERO_SITE = "https://evorove.com"
@@ -74,28 +75,32 @@ def search_summary(result) -> dict[str, int | str]:
 def run_client_zero_search() -> dict[str, int | str]:
     search = hypothesis_search_from_env()
     if search is None:
-        return {
+        summary: dict[str, int | str] = {
             "status": "search_unconnected",
             "candidates": 0,
             "handoffs": 0,
             "rejected": 0,
             "messages_sent": 0,
         }
-    engine = LeadGenerationEngine(
-        presence=client_zero_presence(),
-        hypothesis_search=search,
-        # Client 0 is a nationwide US SaaS product, not a local service
-        # business with one city or service area -- there is no real
-        # locality to infer here, only this product's own jargon
-        # ("CRM", "Cold") that a text heuristic can mistake for one (real
-        # bug found piloting this: "they land in CRM on Cold" read as a
-        # place). The honest geo_radius for client 0 is the whole US
-        # market, not a guess -- leave inference off (default `False`).
-    )
-    result = engine.generate(client_zero_seed())
-    summary = search_summary(result)
-    if result.sent_messages:
-        raise RuntimeError("cycle 1 must not send")
+    else:
+        engine = LeadGenerationEngine(
+            presence=client_zero_presence(),
+            hypothesis_search=search,
+            # Client 0 is a nationwide US SaaS product, not a local service
+            # business with one city or service area -- there is no real
+            # locality to infer here, only this product's own jargon
+            # ("CRM", "Cold") that a text heuristic can mistake for one (real
+            # bug found piloting this: "they land in CRM on Cold" read as a
+            # place). The honest geo_radius for client 0 is the whole US
+            # market, not a guess -- leave inference off (default `False`).
+        )
+        result = engine.generate(client_zero_seed())
+        summary = search_summary(result)
+        if result.sent_messages:
+            raise RuntimeError("cycle 1 must not send")
+    delivery = flush_crm_deliveries_from_env()
+    summary["crm_redelivered"] = delivery["redelivered"]
+    summary["crm_pending"] = delivery["pending"]
     return summary
 
 
@@ -103,7 +108,8 @@ def main() -> None:
     summary = run_client_zero_search()
     print(
         "client_zero status={status} candidates={candidates} "
-        "handoffs={handoffs} rejected={rejected} messages_sent={messages_sent}".format(
+        "handoffs={handoffs} rejected={rejected} messages_sent={messages_sent} "
+        "crm_pending={crm_pending} crm_redelivered={crm_redelivered}".format(
             **summary
         )
     )

@@ -7,14 +7,23 @@ not on this module. Keep the ORM here so the ports stay swappable.
 from __future__ import annotations
 
 import os
+from datetime import datetime
 
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session, sessionmaker
 
+from evorove_lead.crm_touch import (
+    CrmDeliveryRecord,
+    CrmDeliveryStore,
+    NullCrmDeliveryStore,
+    http_sink_from_env,
+    redeliver_pending,
+)
 from evorove_lead.sqlalchemy_models import (
     Base,
     BriefRow,
     CandidateRow,
+    CrmDeliveryRow,
     HypothesisOutcomeRow,
     HypothesisRow,
     RejectedTraceRow,
@@ -29,6 +38,7 @@ from evorove_lead.warehouse import (
     NullAnalysisWarehouse,
     RejectedTraceRecord,
     TraceRecord,
+    new_id,
 )
 
 
@@ -346,3 +356,105 @@ def warehouse_from_env() -> AnalysisWarehouse:
     if not database_url:
         return NullAnalysisWarehouse()
     return SqlAlchemyAnalysisWarehouse(create_engine(database_url, future=True))
+
+
+def _delivery_from_row(row: CrmDeliveryRow) -> CrmDeliveryRecord:
+    return CrmDeliveryRecord(
+        id=row.id,
+        business_id=row.business_id,
+        touch_id=row.touch_id,
+        payload=dict(row.payload or {}),
+        attempts=row.attempts,
+        last_error=row.last_error or "",
+        created_at=row.created_at,
+        updated_at=row.updated_at,
+    )
+
+
+class SqlAlchemyCrmDeliveryStore:
+    """Durable CRM delivery queue backed by Postgres (or SQLite in tests)."""
+
+    def __init__(self, engine) -> None:
+        self._session_factory: sessionmaker[Session] = sessionmaker(
+            bind=engine, expire_on_commit=False, future=True
+        )
+
+    def record_failure(
+        self,
+        business_id: str,
+        touch_id: str,
+        payload: dict[str, object],
+        error: str,
+        now: datetime,
+    ) -> None:
+        with self._session_factory() as session:
+            row = session.scalars(
+                select(CrmDeliveryRow).where(
+                    CrmDeliveryRow.business_id == business_id,
+                    CrmDeliveryRow.touch_id == touch_id,
+                )
+            ).first()
+            if row is None:
+                session.add(
+                    CrmDeliveryRow(
+                        id=new_id("delivery"),
+                        business_id=business_id,
+                        touch_id=touch_id,
+                        payload=dict(payload),
+                        attempts=1,
+                        last_error=error,
+                        created_at=now,
+                        updated_at=now,
+                    )
+                )
+            else:
+                row.attempts = row.attempts + 1
+                row.last_error = error
+                row.payload = dict(payload)
+                row.updated_at = now
+            session.commit()
+
+    def pending(self):
+        with self._session_factory() as session:
+            rows = session.scalars(select(CrmDeliveryRow).order_by(CrmDeliveryRow.created_at))
+            return tuple(_delivery_from_row(row) for row in rows)
+
+    def remove(self, business_id: str, touch_id: str) -> None:
+        with self._session_factory() as session:
+            row = session.scalars(
+                select(CrmDeliveryRow).where(
+                    CrmDeliveryRow.business_id == business_id,
+                    CrmDeliveryRow.touch_id == touch_id,
+                )
+            ).first()
+            if row is not None:
+                session.delete(row)
+                session.commit()
+
+    def pending_count(self) -> int:
+        with self._session_factory() as session:
+            return session.scalar(select(func.count()).select_from(CrmDeliveryRow)) or 0
+
+
+def crm_delivery_store_from_env() -> CrmDeliveryStore:
+    """No `DATABASE_URL` -> `NullCrmDeliveryStore`, same fallback shape as `warehouse_from_env`."""
+
+    database_url = (os.getenv("DATABASE_URL") or "").strip()
+    if not database_url:
+        return NullCrmDeliveryStore()
+    return SqlAlchemyCrmDeliveryStore(create_engine(database_url, future=True))
+
+
+def flush_crm_deliveries_from_env(*, limit: int = 100) -> dict[str, int]:
+    """Retry every queued CRM touch. Counts only; never raises to the caller.
+
+    Runs even when people search is unconnected: a CRM outage yesterday
+    should not wait on a working search to be repaired.
+    """
+
+    store = crm_delivery_store_from_env()
+    http = http_sink_from_env()
+    redelivered = 0
+    if http is not None:
+        redelivered, _ = redeliver_pending(http, store, limit=limit)
+    return {"redelivered": redelivered, "pending": store.pending_count()}

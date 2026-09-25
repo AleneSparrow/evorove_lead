@@ -160,7 +160,7 @@
 
 ## Код сейчас (честно)
 
-Сайт клиента читается как текст. Поиск по умолчанию не подключён (`UnconnectedPeopleSearch`); когда `WEB_SEARCH_BASE_URL` задан, работает `WebSearchPeopleSearch` (ниже) и Cold в CRM из генерации может наполняться (через `crm_touch.py`, если заданы `CRM_BASE_URL` и `INTERNAL_TASK_SECRET`).
+Сайт клиента читается как текст. Поиск по умолчанию не подключён (`UnconnectedPeopleSearch`); когда `WEB_SEARCH_BASE_URL` задан, работает `WebSearchPeopleSearch` (ниже) и Cold в CRM из генерации может наполняться (через `crm_touch.py`, если заданы `CRM_BASE_URL` и `INTERNAL_TASK_SECRET`). Неудачная доставка в CRM поиск не блокирует: ошибка логируется без контакта (только `business_id`, `touch_id`, текст ошибки) и кладётся в outbox-таблицу `crm_deliveries` (миграция `0006`), а `redeliver_pending` повторяет её на следующем прогоне/флаше. Повтор безопасен: CRM дедуплицирует по `touch_id`, уже принятый тач вернётся как `duplicate=True`. Счётчики `crm_pending`/`crm_redelivered` видны в `client_zero`, `run` и внутреннем API (`GET/POST /api/v1/internal/crm-deliveries/status|flush`).
 
 Склад анализа (Postgres цикла 1) физически есть: таблицы `briefs`, `hypotheses`, `traces`, `rejected_traces`, `candidates`, `hypothesis_outcomes`, тенант-скоуп по `business_id` (миграции в `migrations/`, порт 5435, отдельная база от `evorove`/`evorove-crm`). `LeadGenerationEngine` пишет туда сырой след и решение по каждому кандидату при наличии `business_id` — без похода в CRM.
 

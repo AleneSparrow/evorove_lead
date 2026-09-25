@@ -65,4 +65,11 @@ def test_run_without_a_people_source_stops_after_the_offer(dirs, capsys) -> None
         "--materials", str(materials),
     )
 
-    assert summary == {"status": "search_unconnected", "offer_understood": True, "cold": 0, "rejected": []}
+    assert summary == {
+        "status": "search_unconnected",
+        "offer_understood": True,
+        "cold": 0,
+        "rejected": [],
+        "crm_redelivered": 0,
+        "crm_pending": 0,
+    }

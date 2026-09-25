@@ -29,8 +29,14 @@ Cycle 2 owns the first write. CRM holds Cold through Done.
 
 When `CRM_BASE_URL` and `INTERNAL_TASK_SECRET` are set, assembled people are
 POSTed to CRM Cold. `BusinessSeed.business_id` must be the CRM tenant id, and
-the person must already have a phone or email. Failures are swallowed so search
-is not blocked.
+the person must already have a phone or email. A failed POST never blocks
+search: it is logged (business_id, touch_id, error -- never a contact) and
+queued in the `crm_deliveries` outbox (migration `0006`), and
+`redeliver_pending` retries it on the next run/flush. Redelivery is safe --
+CRM dedupes by `touch_id`, so an accepted duplicate comes back as
+`duplicate=True`. `crm_pending`/`crm_redelivered` counts show up in
+`client_zero`, `run`, and the internal API
+(`GET/POST /api/v1/internal/crm-deliveries/status|flush`).
 
 ## Outcome feedback (inbound)
 
@@ -78,7 +84,6 @@ candidates printed as if a search ran). With `CRM_BASE_URL`,
 `INTERNAL_TASK_SECRET`, and `EVOROVE_CLIENT_ZERO_BUSINESS_ID` set, accepted
 people also POST to CRM Cold through the same path any tenant uses;
 without them the search still runs and only skips that POST.
->>>>>>> b33822c (Close cycle-1 client-0 path: honest search docs, contract fit, Cold payload tests.)
 
 ## Local setup
 

@@ -26,6 +26,7 @@ from evorove_lead.engine import GenerationResult, LeadGenerationEngine
 from evorove_lead.materials import DepositedMaterial, load_deposited_materials
 from evorove_lead.observations import OwnerObservationPeopleSearch
 from evorove_lead.presence import HttpPresenceSource
+from evorove_lead.sqlalchemy_warehouse import flush_crm_deliveries_from_env
 
 
 class DepositedPresenceSource:
@@ -70,7 +71,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             business_archetype=args.business_archetype,
         )
     )
-    json.dump(summarize(result), sys.stdout)
+    summary = summarize(result)
+    delivery = flush_crm_deliveries_from_env()
+    summary["crm_redelivered"] = delivery["redelivered"]
+    summary["crm_pending"] = delivery["pending"]
+    json.dump(summary, sys.stdout)
     sys.stdout.write("\n")
     return 0
 
