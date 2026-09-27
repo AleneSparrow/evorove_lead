@@ -5,5 +5,8 @@
 **/__pycache__
 *.egg-info
 owner-observations/*.jsonl
-owner-materials/*
-!owner-materials/README.md
+# owner-materials/*.txt (service.txt etc.) ships in the image on purpose --
+# client_zero.py reads it for the brief. Secrets never belong in this repo
+# regardless; this only widens what a *plain-text* brief file can be named.
+owner-materials/.env
+owner-materials/.env.*
