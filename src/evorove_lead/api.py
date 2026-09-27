@@ -36,6 +36,7 @@ from evorove_lead.searches import (
 )
 
 from evorove_lead.crm_touch import CrmDeliveryStore, http_sink_from_env, redeliver_pending
+from evorove_lead.insights import register_insights_routes
 from evorove_lead.sqlalchemy_warehouse import crm_delivery_store_from_env, warehouse_from_env
 from evorove_lead.warehouse import AnalysisWarehouse, HypothesisOutcomeRecord, new_id
 
@@ -87,6 +88,7 @@ def create_app(
     search_targets = targets if targets is not None else search_targets_from_env()
     deliveries = delivery_store if delivery_store is not None else crm_delivery_store_from_env()
     make_engine = engine_factory or live_engine
+    register_insights_routes(app, store)
 
     def _engine_or_503():
         engine = make_engine()
