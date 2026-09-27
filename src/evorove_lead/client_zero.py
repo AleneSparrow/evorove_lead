@@ -18,7 +18,18 @@ from evorove_lead.web_people_search import hypothesis_search_from_env
 
 CLIENT_ZERO_SITE = "https://evorove.com"
 CLIENT_ZERO_ARCHETYPE = "software subscription"
-OWNER_MATERIALS_DIR = Path(__file__).resolve().parent.parent.parent / "owner-materials"
+
+# `Path(__file__).resolve().parent.parent.parent` looked right in an editable
+# checkout, but once this package is installed normally (the Docker image
+# runs `pip install .`, not `-e .`), `__file__` resolves inside site-packages
+# and three parents up lands nowhere near the repo -- this directory then
+# silently existed and was always empty, and read_offer() correctly rejected
+# the live-only fetch as ungrounded on every client-zero run. The repo is
+# copied to and run from `/app` (see the Dockerfile's `WORKDIR`), so the
+# process's own working directory is the reliable anchor, not the package's
+# install location. `OWNER_MATERIALS_DIR` still lets a test or a different
+# deployment layout override it explicitly.
+OWNER_MATERIALS_DIR = Path(os.getenv("OWNER_MATERIALS_DIR") or (Path.cwd() / "owner-materials"))
 
 
 class _WithOwnerMaterials:
