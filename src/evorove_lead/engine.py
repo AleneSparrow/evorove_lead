@@ -15,6 +15,13 @@ from evorove_lead.selection import Selection, SelectionProfile, select
 from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.geo import infer_geo_radius
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, build_hypotheses, verify_hypothesis
+from evorove_lead.marketing_analysis import (
+    MarketingAnalysis,
+    MarketingAnalysisRejected,
+    MarketingAnalyzer,
+    analysis_as_dict,
+    hypotheses_from_analysis,
+)
 from evorove_lead.materials import DepositedMaterial
 from evorove_lead.offer import OfferRejected, OfferUnderstanding
 from evorove_lead.offer_reader import read_offer
@@ -83,6 +90,7 @@ class LeadGenerationEngine:
         geo_radius: GeoRadius | None = None,
         pattern_library: PatternLibrary | None = None,
         infer_geo_radius_from_brief: bool = False,
+        marketing_analyzer: MarketingAnalyzer | None = None,
     ) -> None:
         self._presence = presence
         self._people_search = people_search or UnconnectedPeopleSearch()
@@ -104,6 +112,9 @@ class LeadGenerationEngine:
         # Phase 4: system-wide, non-tenant. Only ever consulted when
         # `seed.business_archetype` is set -- the engine never invents one.
         self._pattern_library = pattern_library if pattern_library is not None else pattern_library_from_env()
+        # None keeps the literal "serves X" audience path. A set analyzer
+        # replaces those search audiences with grounded inferences.
+        self._marketing_analyzer = marketing_analyzer
 
     def generate(self, seed: BusinessSeed) -> GenerationResult:
         empty = GenerationResult(
@@ -122,9 +133,14 @@ class LeadGenerationEngine:
         if not materials:
             return empty
 
+        analysis: MarketingAnalysis | None = None
         try:
-            offer = read_offer(materials)
-        except OfferRejected:
+            if self._marketing_analyzer is not None:
+                offer = read_offer(materials, require_audience=False)
+                analysis = self._marketing_analyzer.analyze(materials)
+            else:
+                offer = read_offer(materials)
+        except (OfferRejected, MarketingAnalysisRejected):
             return GenerationResult(
                 status=GenerationStatus.OFFER_INCOMPLETE,
                 offer=None,
@@ -132,6 +148,17 @@ class LeadGenerationEngine:
                 handoffs=(),
                 rejected=(),
             )
+
+        if analysis is not None:
+            if self._hypothesis_search is None:
+                return GenerationResult(
+                    status=GenerationStatus.SEARCH_UNCONNECTED,
+                    offer=offer,
+                    candidates=(),
+                    handoffs=(),
+                    rejected=(),
+                )
+            return self._generate_via_hypotheses(seed, offer, materials, analysis)
 
         if self._hypothesis_search is not None:
             return self._generate_via_hypotheses(seed, offer, materials)
@@ -257,6 +284,7 @@ class LeadGenerationEngine:
         seed: BusinessSeed,
         offer: OfferUnderstanding,
         materials: tuple[DepositedMaterial, ...],
+        analysis: MarketingAnalysis | None = None,
     ) -> GenerationResult:
         """Phase 2's real path: hypothesis -> query -> trace -> re-analysis -> Cold.
 
@@ -280,7 +308,14 @@ class LeadGenerationEngine:
         brief_id = new_id("brief") if business_id else ""
         if business_id:
             self._warehouse.save_brief(
-                _brief_record(brief_id, business_id, offer, now, seed.business_archetype)
+                _brief_record(
+                    brief_id,
+                    business_id,
+                    offer,
+                    now,
+                    seed.business_archetype,
+                    analysis_as_dict(analysis) if analysis is not None else None,
+                )
             )
 
         accepted: list[Candidate] = []
@@ -291,13 +326,26 @@ class LeadGenerationEngine:
         # (contract: "его ещё нет на доске... с тем же контактом"), and
         # nobody already handed to the board by an earlier run (step 19).
         seen_identities = self._already_handed_over(business_id)
-        profile = SelectionProfile.from_offer(offer, materials)
-        hypotheses = build_hypotheses(
-            offer,
-            self._resolve_geo_radius(materials),
-            pattern_library=self._pattern_library,
-            business_archetype=seed.business_archetype,
-        )
+        geo_radius = self._resolve_geo_radius(materials)
+        if analysis is not None:
+            profile = SelectionProfile.from_audience_texts(
+                offer, [segment.label for segment in analysis.segments], materials
+            )
+            hypotheses = hypotheses_from_analysis(
+                offer,
+                analysis,
+                geo_radius,
+                pattern_library=self._pattern_library,
+                business_archetype=seed.business_archetype,
+            )
+        else:
+            profile = SelectionProfile.from_offer(offer, materials)
+            hypotheses = build_hypotheses(
+                offer,
+                geo_radius,
+                pattern_library=self._pattern_library,
+                business_archetype=seed.business_archetype,
+            )
         for hypothesis in hypotheses:
             hypothesis_id = new_id("hypothesis") if business_id else ""
             findings = tuple(self._hypothesis_search.find(hypothesis))
@@ -401,6 +449,7 @@ def _brief_record(
     offer: OfferUnderstanding,
     now: datetime,
     business_archetype: str = "",
+    marketing_analysis: dict | None = None,
 ) -> BriefRecord:
     return BriefRecord(
         id=brief_id,
@@ -418,6 +467,7 @@ def _brief_record(
         must_not_promise=offer.must_not_promise,
         created_at=now,
         business_archetype=business_archetype,
+        marketing_analysis=marketing_analysis,
     )
 
 
@@ -437,6 +487,8 @@ def _hypothesis_record(
         evidence_score=hypothesis.evidence_score,
         reach_estimate=hypothesis.reach_estimate,
         created_at=now,
+        audience_source=hypothesis.audience_source,
+        evidence_quote=hypothesis.evidence_quote,
     )
 
 

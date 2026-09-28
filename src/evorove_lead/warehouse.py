@@ -31,6 +31,10 @@ class BriefRecord:
     # so reweight_hypotheses.py can look it up by business_id alone,
     # without needing the archetype re-supplied on every job run.
     business_archetype: str = ""
+    # 4P facts plus inferred segments. None until the marketing analyzer runs.
+    # Kept off the literal who_may_fit list so a quote and an inference
+    # are not stored as the same kind of claim.
+    marketing_analysis: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -54,6 +58,8 @@ class HypothesisRecord:
     accept_rate: float = 0.0
     close_rate: float = 0.0
     query_budget: int = 1
+    audience_source: str = "literal"  # "literal" | "ai_inferred"
+    evidence_quote: str = ""
 
 
 @dataclass(frozen=True)

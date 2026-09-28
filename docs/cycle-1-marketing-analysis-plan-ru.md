@@ -1,7 +1,7 @@
 # Цикл 1 — от regex-цитат к маркетинговому анализу
 
 **Дата:** 27 сентября 2026
-**Статус:** план, код не написан
+**Статус:** модуль 1 в коде (4P + сегменты, цитата отдельно от вывода). Модули 2 и 3 не начаты.
 **Основа:** [`/Users/alenakulish/dev/evorove/FOUNDATION.md`](/Users/alenakulish/dev/evorove/FOUNDATION.md), [`docs/cycle-1-contract.md`](cycle-1-contract.md)
 
 ---

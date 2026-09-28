@@ -11,6 +11,7 @@ from pathlib import Path
 
 from evorove_lead.business import BusinessSeed
 from evorove_lead.engine import LeadGenerationEngine
+from evorove_lead.marketing_analysis import marketing_analyzer_from_env
 from evorove_lead.materials import DepositedMaterial, load_deposited_materials
 from evorove_lead.presence import HttpPresenceSource, PresenceSource
 from evorove_lead.sqlalchemy_warehouse import flush_crm_deliveries_from_env
@@ -97,6 +98,7 @@ def run_client_zero_search() -> dict[str, int | str]:
         engine = LeadGenerationEngine(
             presence=client_zero_presence(),
             hypothesis_search=search,
+            marketing_analyzer=marketing_analyzer_from_env(),
             # Client 0 is a nationwide US SaaS product, not a local service
             # business with one city or service area -- there is no real
             # locality to infer here, only this product's own jargon

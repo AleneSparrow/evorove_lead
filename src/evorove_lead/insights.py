@@ -102,6 +102,49 @@ def _fmt_pairs(pairs: tuple[dict[str, str], ...]) -> str:
     return f"<ul>{''.join(rows)}</ul>"
 
 
+def _marketing_block(analysis: dict | None) -> str:
+    """AI reading, rendered apart from the literal quotes above it."""
+
+    if not analysis:
+        return ""
+
+    def fact_row(label: str, fact: object) -> str:
+        if not isinstance(fact, dict) or not fact.get("quote"):
+            return f"<li><strong>{escape(label)}</strong> <span class=\"muted\">not stated in the materials</span></li>"
+        quote = escape(str(fact.get("quote", "")))
+        source = escape(str(fact.get("source_name", "")))
+        return (
+            f"<li><strong>{escape(label)}</strong> {quote} "
+            f"<span class=\"muted\">quoted from the client's materials (source: {source})</span></li>"
+        )
+
+    facts = "".join(
+        fact_row(label, analysis.get(key))
+        for label, key in (
+            ("Product", "product"),
+            ("Price", "price"),
+            ("Place", "place"),
+            ("Promotion", "promotion"),
+        )
+    )
+    segments = analysis.get("segments") if isinstance(analysis.get("segments"), list) else []
+    segment_rows = "".join(
+        f"<li><span class=\"tag\">AI inference</span> {escape(str(segment.get('label', '')))} "
+        f"via {escape(str(segment.get('channel', '')))}"
+        f"<div>Evidence quoted from the client's materials: {escape(str(segment.get('evidence_quote', '')))} "
+        f"<span class=\"muted\">({escape(str(segment.get('source_name', '')))})</span></div></li>"
+        for segment in segments
+        if isinstance(segment, dict)
+    )
+    return f"""
+<h2>Marketing reading</h2>
+<p class="muted">4P lines are quotes. Segment labels are an AI inference, each tied to a quote.</p>
+<ul>{facts}</ul>
+<p><strong>Inferred audiences</strong></p>
+<ul>{segment_rows}</ul>
+"""
+
+
 def _brief_section(briefs: tuple[BriefRecord, ...]) -> str:
     if not briefs:
         return '<h2>Brief</h2><p class="muted">No brief run yet for this business.</p>'
@@ -111,7 +154,8 @@ def _brief_section(briefs: tuple[BriefRecord, ...]) -> str:
 <h2>Brief — what the engine understood about this business</h2>
 <p class="muted">Formed {escape(b.created_at.isoformat())} · archetype: {escape(b.business_archetype or '—')}</p>
 <p><strong>What we sell</strong></p>{_fmt_pairs(b.what_we_sell)}
-<p><strong>Who may fit</strong></p>{_fmt_pairs(b.who_may_fit)}
+<p><strong>Who may fit — quoted from the client's materials</strong></p>{_fmt_pairs(b.who_may_fit)}
+{_marketing_block(b.marketing_analysis)}
 <p><strong>Commercial claims on file</strong></p>{_fmt_pairs(b.commercial_claims)}
 <p><strong>Must never promise</strong></p><ul>{must_not}</ul>
 """
@@ -140,10 +184,18 @@ def _hypothesis_card(
         f'</div>'
         for c in list(accepted) + list(rejected)
     ) or '<p class="muted">No candidates decided yet.</p>'
+    if h.audience_source == "ai_inferred":
+        source_line = (
+            f'<p><span class="tag">AI inference</span> '
+            f'Evidence quoted from the client\'s materials: {escape(h.evidence_quote)}</p>'
+        )
+    else:
+        source_line = '<p><span class="tag">quoted from the client\'s materials</span></p>'
     return f"""
 <div class="card">
   <p><strong>{escape(h.audience_segment)}</strong> via {escape(h.channel)}
      <span class="tag">{escape(h.status)}</span></p>
+  {source_line}
   <p class="muted">query template: "{escape(h.query_template)}" · trigger: {escape(h.intent_trigger)}</p>
   <p class="muted">fit {h.fit_score:.2f} · evidence {h.evidence_score:.2f} · reach est. {h.reach_estimate}
      · accept rate {h.accept_rate:.0%} · close rate {h.close_rate:.0%}</p>

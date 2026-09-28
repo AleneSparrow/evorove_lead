@@ -82,6 +82,46 @@ def test_hypothesis_round_trips_and_is_tenant_scoped(warehouse):
     assert hypotheses[0].accept_rate == 0.0
     assert hypotheses[0].close_rate == 0.0
     assert hypotheses[0].query_budget == 1
+    assert hypotheses[0].audience_source == "literal"
+    assert hypotheses[0].evidence_quote == ""
+
+
+def test_marketing_analysis_and_inferred_audience_round_trip(warehouse):
+    from dataclasses import replace
+
+    warehouse.save_brief(
+        replace(
+            _brief("biz-a", "brief-1"),
+            marketing_analysis={
+                "product": {"quote": "haircuts", "source_name": "site"},
+                "price": None,
+                "place": None,
+                "promotion": None,
+                "segments": [
+                    {
+                        "label": "people who book their own haircut",
+                        "evidence_quote": "for busy professionals",
+                        "source_name": "site",
+                        "channel": "forums",
+                    }
+                ],
+            },
+        )
+    )
+    warehouse.save_hypothesis(
+        replace(
+            _hypothesis("biz-a", "brief-1", "hyp-1"),
+            audience_source="ai_inferred",
+            evidence_quote="for busy professionals",
+        )
+    )
+
+    brief = warehouse.list_briefs("biz-a")[0]
+    hypothesis = warehouse.list_hypotheses("biz-a")[0]
+
+    assert brief.marketing_analysis["segments"][0]["label"] == "people who book their own haircut"
+    assert hypothesis.audience_source == "ai_inferred"
+    assert hypothesis.evidence_quote == "for busy professionals"
 
 
 def test_hypothesis_budget_fields_round_trip(warehouse):

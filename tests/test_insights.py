@@ -198,6 +198,63 @@ def test_business_page_escapes_untrusted_trace_text():
     assert "&lt;script&gt;" in response.text
 
 
+def test_business_page_separates_a_quote_from_an_ai_inference():
+    client, warehouse = _client()
+    _seed(warehouse)
+    warehouse.save_brief(
+        BriefRecord(
+            id="brief-1",
+            business_id="acme",
+            what_we_sell=({"text": "furnace repair", "source_name": "acme.example"},),
+            who_may_fit=({"text": "homeowners with an old furnace", "source_name": "acme.example"},),
+            commercial_claims=(),
+            must_not_promise=("price",),
+            created_at=NOW,
+            marketing_analysis={
+                "product": {"quote": "furnace repair", "source_name": "acme.example"},
+                "price": None,
+                "place": None,
+                "promotion": None,
+                "segments": [
+                    {
+                        "label": "owners of older houses",
+                        "evidence_quote": "homeowners with an old furnace",
+                        "source_name": "acme.example",
+                        "channel": "forums",
+                    }
+                ],
+            },
+        )
+    )
+    warehouse.save_hypothesis(
+        HypothesisRecord(
+            id="hyp-ai",
+            business_id="acme",
+            brief_id="brief-1",
+            audience_segment="owners of older houses",
+            channel="forums",
+            query_template="owners of older houses forum",
+            intent_trigger="demographic_fit",
+            status="live",
+            fit_score=0.0,
+            evidence_score=0.0,
+            reach_estimate=0,
+            created_at=NOW,
+            audience_source="ai_inferred",
+            evidence_quote="homeowners with an old furnace",
+        )
+    )
+
+    response = client.get("/insights/business", params={"business_id": "acme"}, auth=AUTH)
+
+    assert response.status_code == 200
+    body = response.text
+    assert "quoted from the client&#x27;s materials" in body or "quoted from the client's materials" in body
+    assert "AI inference" in body
+    assert "owners of older houses" in body
+    assert "homeowners with an old furnace" in body
+
+
 def test_unknown_business_renders_empty_sections():
     client, _ = _client()
 

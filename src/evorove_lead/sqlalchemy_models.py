@@ -45,6 +45,7 @@ class BriefRow(Base):
     must_not_promise = Column(JSON_VALUE, nullable=False)
     created_at = Column(DateTime(timezone=True), nullable=False)
     business_archetype = Column(String(128), nullable=False, default="")
+    marketing_analysis = Column(JSON_VALUE, nullable=True)
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_briefs_business_id_id"),
@@ -76,6 +77,8 @@ class HypothesisRow(Base):
     accept_rate = Column(Float, nullable=False, default=0.0)
     close_rate = Column(Float, nullable=False, default=0.0)
     query_budget = Column(Integer, nullable=False, default=1)
+    audience_source = Column(String(16), nullable=False, default="literal")
+    evidence_quote = Column(Text, nullable=False, default="")
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_hypotheses_business_id_id"),
@@ -89,6 +92,10 @@ class HypothesisRow(Base):
             "status IN ('live','dead','paused')", name="ck_hypotheses_known_status"
         ),
         CheckConstraint("query_budget >= 0", name="ck_hypotheses_budget_nonnegative"),
+        CheckConstraint(
+            "audience_source IN ('literal','ai_inferred')",
+            name="ck_hypotheses_audience_source",
+        ),
     )
 
 

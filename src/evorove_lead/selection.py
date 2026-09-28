@@ -111,6 +111,19 @@ class SelectionProfile:
         service = _terms([*(claim.text for claim in offer.what_we_sell), *(m.body for m in materials)])
         return cls(service_terms=frozenset(service - audience), audience_terms=audience)
 
+    @classmethod
+    def from_audience_texts(
+        cls,
+        offer: OfferUnderstanding,
+        audience_texts: Sequence[str],
+        materials: Sequence[DepositedMaterial] = (),
+    ) -> "SelectionProfile":
+        """Fit words from inferred segment labels, not from "serves X" quotes."""
+
+        audience = _terms(audience_texts)
+        service = _terms([*(claim.text for claim in offer.what_we_sell), *(m.body for m in materials)])
+        return cls(service_terms=frozenset(service - audience), audience_terms=audience)
+
 
 @dataclass(frozen=True)
 class Selection:

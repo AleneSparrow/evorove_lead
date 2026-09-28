@@ -178,7 +178,9 @@ def _price_claims(body: str, source_name: str) -> tuple[CommercialClaim, ...]:
     return tuple(claims)
 
 
-def read_offer(materials: Sequence[DepositedMaterial]) -> OfferUnderstanding:
+def read_offer(
+    materials: Sequence[DepositedMaterial], *, require_audience: bool = True
+) -> OfferUnderstanding:
     """Turn the business's own words into a grounded offer, or raise."""
 
     what_we_sell: list[GroundedClaim] = []
@@ -207,4 +209,5 @@ def read_offer(materials: Sequence[DepositedMaterial]) -> OfferUnderstanding:
         what_we_sell=what_we_sell,
         who_may_fit=who_may_fit,
         commercial_claims=commercial,
+        require_audience=require_audience,
     )

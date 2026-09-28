@@ -83,6 +83,17 @@ class Hypothesis:
     fit_score: float = 0.0
     evidence_score: float = 0.0
     reach_estimate: int = 0
+    # "literal" — the audience phrase is a quote from the materials.
+    # "ai_inferred" — the label is an interpretation; evidence_quote is the
+    # quote that prompted it and must already be in the materials.
+    audience_source: str = "literal"
+    evidence_quote: str = ""
+
+    def __post_init__(self) -> None:
+        if self.audience_source not in ("literal", "ai_inferred"):
+            raise ValueError(f"unknown audience source {self.audience_source!r}")
+        if self.audience_source == "ai_inferred" and not self.evidence_quote.strip():
+            raise ValueError("ai-inferred audience requires an evidence quote")
 
 
 class HypothesisProbe(Protocol):

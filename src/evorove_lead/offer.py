@@ -73,11 +73,16 @@ def accept_offer_understanding(
     what_we_sell: Iterable[GroundedClaim],
     who_may_fit: Iterable[GroundedClaim],
     commercial_claims: Iterable[CommercialClaim] = (),
+    require_audience: bool = True,
 ) -> OfferUnderstanding:
     """Accept a structured offer or reject invented claims.
 
     Product invariant: no business materials, no offer. No quote in those
     words, no price, discount, guarantee, or legal claim.
+
+    `require_audience` stays on for the literal reader. The marketing
+    analyzer path turns it off: that audience is an inference with its own
+    evidence quote, not a second copy of "serves X".
     """
 
     if not materials:
@@ -90,7 +95,7 @@ def accept_offer_understanding(
 
     if not sold:
         raise OfferRejected("what_we_sell is required")
-    if not audience:
+    if require_audience and not audience:
         raise OfferRejected("who_may_fit is required")
 
     for claim in sold:

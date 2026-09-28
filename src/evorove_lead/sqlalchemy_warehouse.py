@@ -63,6 +63,7 @@ def _brief_to_row(record: BriefRecord) -> BriefRow:
         must_not_promise=list(record.must_not_promise),
         created_at=record.created_at,
         business_archetype=record.business_archetype,
+        marketing_analysis=record.marketing_analysis,
     )
 
 
@@ -76,6 +77,7 @@ def _brief_from_row(row: BriefRow) -> BriefRecord:
         must_not_promise=tuple(row.must_not_promise or ()),
         business_archetype=row.business_archetype or "",
         created_at=row.created_at,
+        marketing_analysis=row.marketing_analysis,
     )
 
 
@@ -96,6 +98,8 @@ def _hypothesis_to_row(record: HypothesisRecord) -> HypothesisRow:
         accept_rate=record.accept_rate,
         close_rate=record.close_rate,
         query_budget=record.query_budget,
+        audience_source=record.audience_source,
+        evidence_quote=record.evidence_quote,
     )
 
 
@@ -116,6 +120,8 @@ def _hypothesis_from_row(row: HypothesisRow) -> HypothesisRecord:
         accept_rate=row.accept_rate,
         close_rate=row.close_rate,
         query_budget=row.query_budget,
+        audience_source=row.audience_source or "literal",
+        evidence_quote=row.evidence_quote or "",
     )
 
 
