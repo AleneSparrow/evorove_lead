@@ -179,3 +179,60 @@ def test_connector_finds_nothing_when_client_returns_no_hits():
 
     assert connector.find(hypothesis) == ()
     assert connector.connected is True
+
+
+def _business_hypothesis(query_template: str = "restaurants near Austin") -> Hypothesis:
+    return Hypothesis(
+        audience_segment="restaurants",
+        channel="web_search",
+        query_template=query_template,
+        intent_trigger=IntentTrigger(kind="business_listing", description="restaurants"),
+        geo_radius=GeoRadius(locality="Austin"),
+    )
+
+
+def test_business_listing_traces_every_hit_including_a_dropped_directory():
+    hypothesis = _business_hypothesis()
+    client = FakeClient(
+        (
+            SearchHit(url="https://www.tonys-pizza.com/", snippet="Tony's restaurant in Austin"),
+            SearchHit(url="https://www.yelp.com/biz/tonys", snippet="Best restaurants in Austin"),
+        )
+    )
+    connector = WebSearchPeopleSearch(
+        client,
+        page_fetcher=_fetcher({"https://www.tonys-pizza.com/": "Tony's. Contact: hello@tonys-pizza.com"}),
+    )
+
+    findings = connector.find(hypothesis)
+
+    assert len(findings) == 2
+    assert findings[0].hit is not None
+    assert findings[0].hit.identity == "hello@tonys-pizza.com"
+    assert findings[0].hit.source_kind == "business"
+    assert findings[1].hit is None
+    assert findings[1].reject_reason == "not the company's own website"
+
+
+def test_business_listing_traces_a_repeat_domain_without_fetching_it_twice():
+    hypothesis = _business_hypothesis()
+    client = FakeClient(
+        (
+            SearchHit(url="https://www.tonys-pizza.com/", snippet="Restaurants in Austin"),
+            SearchHit(url="https://www.tonys-pizza.com/menu", snippet="Austin restaurants menu"),
+        )
+    )
+    fetch_calls = []
+
+    def fetch(url: str) -> str:
+        fetch_calls.append(url)
+        return "hello@tonys-pizza.com"
+
+    connector = WebSearchPeopleSearch(client, page_fetcher=fetch)
+
+    findings = connector.find(hypothesis)
+
+    assert len(findings) == 2
+    assert fetch_calls == ["https://www.tonys-pizza.com/"]
+    assert findings[1].hit is None
+    assert findings[1].reject_reason == "same company already found in this search"

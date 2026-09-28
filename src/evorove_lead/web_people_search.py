@@ -13,7 +13,9 @@ import re
 from typing import TYPE_CHECKING, Sequence
 from urllib.parse import urlsplit
 
+from evorove_lead.business_listing import CompanyCandidate
 from evorove_lead.crm_touch import EMAIL_RE
+from evorove_lead.platforms import PLATFORM_DOMAINS, is_platform, registrable_domain
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
 from evorove_lead.search import PeopleHit, TraceFinding
 from evorove_lead.web_search import SearchHit, WebSearchClient, client_from_env, fetch_page_text
@@ -45,15 +47,8 @@ def _extract_phone(text: str) -> str | None:
 # Step 19: a contact is a published *work* address of the company itself, or
 # the person's own address in their post -- never the address of the page
 # that happened to host it (a forum's admin@, a directory's info@).
-_PLATFORM_DOMAINS = frozenset(
-    """
-    reddit.com facebook.com instagram.com twitter.com x.com linkedin.com tiktok.com youtube.com
-    nextdoor.com craigslist.org quora.com yelp.com medium.com wordpress.com blogspot.com
-    yellowpages.com bbb.org angi.com angieslist.com thumbtack.com homeadvisor.com houzz.com
-    google.com stackexchange.com stackoverflow.com patch.com city-data.com tripadvisor.com
-    """.split()
-)
-_PLATFORM_LABELS = ("forum", "forums", "community", "discuss", "board", "boards", "groups")
+# `is_platform`/`registrable_domain` moved to platforms.py so business_listing.py
+# (module 2) can use the same check without importing this module back.
 _OPS_LOCAL_PARTS = frozenset(
     """
     admin administrator webmaster postmaster hostmaster abuse noreply no-reply donotreply
@@ -62,23 +57,11 @@ _OPS_LOCAL_PARTS = frozenset(
 )
 
 
-def _registrable_domain(host: str) -> str:
-    labels = [label for label in host.casefold().strip(".").split(".") if label]
-    return ".".join(labels[-2:]) if len(labels) >= 2 else host.casefold()
-
-
-def _is_platform(host: str) -> bool:
-    host = host.casefold()
-    return _registrable_domain(host) in _PLATFORM_DOMAINS or any(
-        label in _PLATFORM_LABELS for label in host.split(".")[:-2]
-    ) or any(part in host for part in ("forum", "community"))
-
-
 def pick_contact_email(page_url: str, page_text: str, *, business: bool) -> str | None:
     """The one address that may become a candidate, or None."""
 
     host = urlsplit(page_url).hostname or ""
-    page_domain = _registrable_domain(host)
+    page_domain = registrable_domain(host)
     for match in EMAIL_RE.finditer(page_text):
         address = match.group(0).casefold().strip(".")
         local, _, domain = address.partition("@")
@@ -86,11 +69,11 @@ def pick_contact_email(page_url: str, page_text: str, *, business: bool) -> str 
             continue
         if business:
             # The company's own site, and an address on the company's own domain.
-            if not _is_platform(host) and _registrable_domain(domain) == page_domain:
+            if not is_platform(host) and registrable_domain(domain) == page_domain:
                 return address
             continue
         # A person's post: their own address, not the hosting site's.
-        if _registrable_domain(domain) != page_domain and _registrable_domain(domain) not in _PLATFORM_DOMAINS:
+        if registrable_domain(domain) != page_domain and registrable_domain(domain) not in PLATFORM_DOMAINS:
             return address
     return None
 
@@ -143,10 +126,56 @@ class WebSearchPeopleSearch:
         self.connected = True
 
     def find(self, hypothesis: "Hypothesis") -> Sequence[TraceFinding]:
+        if hypothesis.intent_trigger.kind == "business_listing":
+            return self._find_companies(hypothesis)
         return tuple(
             self._finding_for(hypothesis, search_hit)
             for search_hit in self._client.search(hypothesis.query_template)
         )
+
+    def _find_companies(self, hypothesis: "Hypothesis") -> tuple[TraceFinding, ...]:
+        """Module 2's list-then-contact split, one `TraceFinding` per raw hit.
+
+        `business_listing.discover_companies` runs the same accept/reject
+        rule as a standalone, directly testable "which companies did we
+        find" step. This applies it hit by hit instead of delegating,
+        because `TraceFinding` keeps every trace the warehouse should see,
+        including the ones this rejects as a directory or a repeat of a
+        company already found earlier in this same search -- silently
+        dropping those would erase the audit trail `search.py` promises.
+        """
+
+        findings: list[TraceFinding] = []
+        seen_domains: set[str] = set()
+        for hit in self._client.search(hypothesis.query_template):
+            base = dict(
+                url=hit.url,
+                raw_text=hit.snippet,
+                query_used=hypothesis.query_template,
+                source_channel=hypothesis.channel,
+            )
+            try:
+                validated = validate_public_http_url(hit.url)
+            except PresenceRejected as exc:
+                findings.append(TraceFinding(**base, reject_reason=str(exc)))
+                continue
+            host = urlsplit(validated).hostname or ""
+            if is_platform(host):
+                findings.append(TraceFinding(**base, reject_reason="not the company's own website"))
+                continue
+            domain = registrable_domain(host)
+            if domain in seen_domains:
+                findings.append(
+                    TraceFinding(**base, reject_reason="same company already found in this search")
+                )
+                continue
+            seen_domains.add(domain)
+            company = CompanyCandidate(
+                url=validated, registrable_domain=domain, snippet=hit.snippet,
+                query_used=hypothesis.query_template,
+            )
+            findings.append(self._finding_for_company(hypothesis, company))
+        return tuple(findings)
 
     def _finding_for(self, hypothesis: "Hypothesis", search_hit: SearchHit) -> TraceFinding:
         base = dict(
@@ -170,16 +199,45 @@ class WebSearchPeopleSearch:
             return TraceFinding(**base, reject_reason=str(exc))
 
         excerpt = (search_hit.snippet or page_text[:PAGE_TEXT_EXCERPT_CHARS]).strip()
-        business = hypothesis.intent_trigger.kind == "business_listing"
-        source_kind = "business" if business else "person"
-        if business and _is_platform(urlsplit(search_hit.url).hostname or ""):
-            return TraceFinding(**{**base, "raw_text": excerpt}, reject_reason="not the company's own website")
-        email = pick_contact_email(search_hit.url, page_text, business=business)
+        return self._with_contact(base, excerpt, search_hit.url, page_text, source_kind="person")
+
+    def _finding_for_company(self, hypothesis: "Hypothesis", company: "CompanyCandidate") -> TraceFinding:
+        """Module 3's current baseline: any address on the company's own domain.
+
+        `_find_companies` already dropped platforms, non-public URLs, and
+        repeat domains before calling this, so it only has to fetch the
+        page and look for a contact. Picking the named decision-maker
+        instead of the first address on the page (the plan's "not info@"
+        requirement) is the next increment, not yet built.
+        """
+
+        base = dict(
+            url=company.url,
+            raw_text=company.snippet,
+            query_used=hypothesis.query_template,
+            source_channel=hypothesis.channel,
+        )
+
+        if not _on_topic(hypothesis, company.snippet):
+            return TraceFinding(**base, reject_reason="trace is not about this hypothesis")
+
+        try:
+            page_text = self._page_fetcher(company.url)
+        except PresenceRejected as exc:
+            return TraceFinding(**base, reject_reason=str(exc))
+
+        excerpt = (company.snippet or page_text[:PAGE_TEXT_EXCERPT_CHARS]).strip()
+        return self._with_contact(base, excerpt, company.url, page_text, source_kind="business")
+
+    def _with_contact(
+        self, base: dict, excerpt: str, url: str, page_text: str, *, source_kind: str
+    ) -> TraceFinding:
+        email = pick_contact_email(url, page_text, business=source_kind == "business")
         if email is not None:
             hit = PeopleHit(
                 identity=email,
                 observed_fact=excerpt,
-                observed_source=search_hit.url,
+                observed_source=url,
                 channel="email",
                 source_kind=source_kind,
             )
@@ -190,7 +248,7 @@ class WebSearchPeopleSearch:
             hit = PeopleHit(
                 identity=phone,
                 observed_fact=excerpt,
-                observed_source=search_hit.url,
+                observed_source=url,
                 channel="phone",  # never texted cold (TCPA)
                 source_kind=source_kind,
             )
