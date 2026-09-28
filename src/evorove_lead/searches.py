@@ -19,6 +19,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from evorove_lead.business import BusinessSeed
+from evorove_lead.decision_maker_llm import decision_maker_completion_from_env
 from evorove_lead.engine import GenerationStatus, LeadGenerationEngine
 from evorove_lead.marketing_analysis import marketing_analyzer_from_env
 from evorove_lead.presence import HttpPresenceSource
@@ -121,7 +122,9 @@ def live_engine() -> LeadGenerationEngine | None:
         return None
     return LeadGenerationEngine(
         presence=HttpPresenceSource(),
-        hypothesis_search=WebSearchPeopleSearch(client),
+        hypothesis_search=WebSearchPeopleSearch(
+            client, decision_maker_llm=decision_maker_completion_from_env()
+        ),
         infer_geo_radius_from_brief=True,
         marketing_analyzer=marketing_analyzer_from_env(),
     )

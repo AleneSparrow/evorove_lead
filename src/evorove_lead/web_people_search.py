@@ -15,7 +15,12 @@ from urllib.parse import urlsplit
 
 from evorove_lead.business_listing import CompanyCandidate
 from evorove_lead.crm_touch import EMAIL_RE
-from evorove_lead.decision_maker import find_decision_maker
+from evorove_lead.decision_maker import fetch_candidate_pages, heuristic_decision_maker
+from evorove_lead.decision_maker_llm import (
+    DecisionMakerCompletion,
+    decision_maker_completion_from_env,
+    find_decision_maker_llm,
+)
 from evorove_lead.platforms import PLATFORM_DOMAINS, is_platform, registrable_domain
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
 from evorove_lead.search import PeopleHit, TraceFinding
@@ -108,7 +113,7 @@ def hypothesis_search_from_env() -> WebSearchPeopleSearch | None:
     client = client_from_env()
     if client is None:
         return None
-    return WebSearchPeopleSearch(client)
+    return WebSearchPeopleSearch(client, decision_maker_llm=decision_maker_completion_from_env())
 
 
 class WebSearchPeopleSearch:
@@ -121,9 +126,17 @@ class WebSearchPeopleSearch:
     `_STRICT_PHONE_RE` -- a bare digit run is not enough.
     """
 
-    def __init__(self, client: WebSearchClient, page_fetcher=fetch_page_text) -> None:
+    def __init__(
+        self,
+        client: WebSearchClient,
+        page_fetcher=fetch_page_text,
+        decision_maker_llm: DecisionMakerCompletion | None = None,
+    ) -> None:
         self._client = client
         self._page_fetcher = page_fetcher
+        # None keeps module 3's regex-only heuristic. A set completion adds
+        # the LLM read as a fallback for a page the heuristic can't parse.
+        self._decision_maker_llm = decision_maker_llm
         self.connected = True
 
     def find(self, hypothesis: "Hypothesis") -> Sequence[TraceFinding]:
@@ -207,10 +220,12 @@ class WebSearchPeopleSearch:
         domain as the fallback.
 
         `_find_companies` already dropped platforms, non-public URLs, and
-        repeat domains before calling this. `find_decision_maker` tries the
-        homepage plus a few guessed About/Team paths for a name next to an
-        owner/founder/director role word; only when that heuristic finds
-        nothing anywhere does this fall back to `pick_contact_email`'s
+        repeat domains before calling this. The homepage plus a few guessed
+        About/Team paths are fetched once and tried against the regex
+        heuristic for a name next to an owner/founder/director role word;
+        when a `decision_maker_llm` is configured, the same already-fetched
+        pages go to the LLM next if the heuristic found nothing. Only when
+        neither finds anyone does this fall back to `pick_contact_email`'s
         wider "any address on the company's own domain" rule, which is how
         `info@` can still end up here.
         """
@@ -225,7 +240,10 @@ class WebSearchPeopleSearch:
         if not _on_topic(hypothesis, company.snippet):
             return TraceFinding(**base, reject_reason="trace is not about this hypothesis")
 
-        decision_maker = find_decision_maker(company.url, company.registrable_domain, self._page_fetcher)
+        pages = fetch_candidate_pages(company.url, self._page_fetcher)
+        decision_maker = heuristic_decision_maker(pages, company.registrable_domain)
+        if decision_maker is None and self._decision_maker_llm is not None:
+            decision_maker = find_decision_maker_llm(pages, company.registrable_domain, self._decision_maker_llm)
         if decision_maker is not None:
             hit = PeopleHit(
                 identity=decision_maker.email,
@@ -239,10 +257,14 @@ class WebSearchPeopleSearch:
                 hit=hit,
             )
 
-        try:
-            page_text = self._page_fetcher(company.url)
-        except PresenceRejected as exc:
-            return TraceFinding(**base, reject_reason=str(exc))
+        homepage_text = dict(pages).get(company.url)
+        if homepage_text is not None:
+            page_text = homepage_text
+        else:
+            try:
+                page_text = self._page_fetcher(company.url)
+            except PresenceRejected as exc:
+                return TraceFinding(**base, reject_reason=str(exc))
 
         excerpt = (company.snippet or page_text[:PAGE_TEXT_EXCERPT_CHARS]).strip()
         return self._with_contact(base, excerpt, company.url, page_text, source_kind="business")

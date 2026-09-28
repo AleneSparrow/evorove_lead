@@ -10,16 +10,16 @@ owner/founder/director-shaped role word, on the homepage or a guessed
 About/Team page, paired with the email on that same page that looks like
 it belongs to that name (never a generic business inbox). When no such
 pair turns up anywhere, this returns None and the caller falls back to
-`pick_contact_email`'s wider rule -- an LLM reading of an unstructured
-About page, for the cases this regex heuristic cannot parse, is the next
-increment, not yet built.
+`pick_contact_email`'s wider rule. `decision_maker_llm.py` is the other
+half: an LLM reading of the same fetched pages, for an unstructured About
+page this regex heuristic cannot parse.
 """
 
 from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Callable
+from typing import Callable, Sequence
 from urllib.parse import urljoin
 
 from evorove_lead.crm_touch import EMAIL_RE
@@ -65,20 +65,31 @@ class DecisionMaker:
     source_url: str
 
 
-def find_decision_maker(
-    company_url: str, domain: str, fetch_text: Callable[[str], str]
-) -> DecisionMaker | None:
-    """Try the homepage, then each guessed About/Team page, in that order.
+def fetch_candidate_pages(
+    company_url: str, fetch_text: Callable[[str], str]
+) -> tuple[tuple[str, str], ...]:
+    """The homepage plus each guessed About/Team page that actually fetched.
 
-    Stops at the first page where a name sits near a role word AND that
-    page also has an email that looks like it belongs to that name.
+    Exposed separately from the heuristic so a caller can also hand these
+    same pages to the LLM fallback (`decision_maker_llm.py`) without
+    fetching them a second time.
     """
 
+    pages: list[tuple[str, str]] = []
     for url in _candidate_urls(company_url):
         try:
             text = fetch_text(url)
         except PresenceRejected:
             continue
+        pages.append((url, text))
+    return tuple(pages)
+
+
+def heuristic_decision_maker(pages: Sequence[tuple[str, str]], domain: str) -> DecisionMaker | None:
+    """Stops at the first page where a name sits near a role word AND that
+    page also has an email that looks like it belongs to that name."""
+
+    for url, text in pages:
         found = _find_named_role(text)
         if found is None:
             continue
@@ -88,6 +99,14 @@ def find_decision_maker(
             continue
         return DecisionMaker(name=name, role=role, email=email, evidence_quote=sentence, source_url=url)
     return None
+
+
+def find_decision_maker(
+    company_url: str, domain: str, fetch_text: Callable[[str], str]
+) -> DecisionMaker | None:
+    """Convenience wrapper: fetch the candidate pages, then the regex heuristic only."""
+
+    return heuristic_decision_maker(fetch_candidate_pages(company_url, fetch_text), domain)
 
 
 def _candidate_urls(company_url: str) -> tuple[str, ...]:

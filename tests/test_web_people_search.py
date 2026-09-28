@@ -1,3 +1,6 @@
+import json
+
+from evorove_lead.decision_maker_llm import ScriptedDecisionMakerCompletion
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, IntentTrigger
 from evorove_lead.presence import PresenceRejected
 from evorove_lead.web_people_search import WebSearchPeopleSearch
@@ -236,3 +239,55 @@ def test_business_listing_traces_a_repeat_domain_without_fetching_it_twice():
     assert "https://www.tonys-pizza.com/menu" not in fetch_calls
     assert findings[1].hit is None
     assert findings[1].reject_reason == "same company already found in this search"
+
+
+def test_business_listing_uses_the_llm_fallback_when_the_heuristic_finds_no_one():
+    hypothesis = _business_hypothesis()
+    client = FakeClient(
+        (SearchHit(url="https://www.tonys-pizza.com/", snippet="Restaurants in Austin"),)
+    )
+    page_text = (
+        "Tony's Pizza. Restaurants in Austin since 1994, run by Jane. "
+        "Questions? jane@tonys-pizza.com"
+    )
+    connector = WebSearchPeopleSearch(
+        client,
+        page_fetcher=_fetcher({"https://www.tonys-pizza.com/": page_text}),
+        decision_maker_llm=ScriptedDecisionMakerCompletion(
+            json.dumps(
+                {
+                    "name": "Jane Doe",
+                    "role": "Owner",
+                    "email": "jane@tonys-pizza.com",
+                    "evidence_quote": "Restaurants in Austin since 1994, run by Jane.",
+                }
+            )
+        ),
+    )
+
+    findings = connector.find(hypothesis)
+
+    assert len(findings) == 1
+    assert findings[0].hit is not None
+    assert findings[0].hit.identity == "jane@tonys-pizza.com"
+
+
+def test_business_listing_falls_back_to_pick_contact_email_when_llm_also_finds_no_one():
+    hypothesis = _business_hypothesis()
+    client = FakeClient(
+        (SearchHit(url="https://www.tonys-pizza.com/", snippet="Restaurants in Austin"),)
+    )
+    page_text = "Tony's Pizza. Restaurants in Austin since 1994. Questions? hello@tonys-pizza.com"
+    connector = WebSearchPeopleSearch(
+        client,
+        page_fetcher=_fetcher({"https://www.tonys-pizza.com/": page_text}),
+        decision_maker_llm=ScriptedDecisionMakerCompletion(
+            json.dumps({"name": None, "role": None, "email": None, "evidence_quote": None})
+        ),
+    )
+
+    findings = connector.find(hypothesis)
+
+    assert len(findings) == 1
+    assert findings[0].hit is not None
+    assert findings[0].hit.identity == "hello@tonys-pizza.com"
