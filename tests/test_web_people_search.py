@@ -233,6 +233,6 @@ def test_business_listing_traces_a_repeat_domain_without_fetching_it_twice():
     findings = connector.find(hypothesis)
 
     assert len(findings) == 2
-    assert fetch_calls == ["https://www.tonys-pizza.com/"]
+    assert "https://www.tonys-pizza.com/menu" not in fetch_calls
     assert findings[1].hit is None
     assert findings[1].reject_reason == "same company already found in this search"

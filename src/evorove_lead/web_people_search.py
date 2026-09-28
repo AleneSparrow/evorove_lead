@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from evorove_lead.business_listing import CompanyCandidate
 from evorove_lead.crm_touch import EMAIL_RE
+from evorove_lead.decision_maker import find_decision_maker
 from evorove_lead.platforms import PLATFORM_DOMAINS, is_platform, registrable_domain
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
 from evorove_lead.search import PeopleHit, TraceFinding
@@ -202,13 +203,16 @@ class WebSearchPeopleSearch:
         return self._with_contact(base, excerpt, search_hit.url, page_text, source_kind="person")
 
     def _finding_for_company(self, hypothesis: "Hypothesis", company: "CompanyCandidate") -> TraceFinding:
-        """Module 3's current baseline: any address on the company's own domain.
+        """Module 3: the named decision-maker first, any address on the
+        domain as the fallback.
 
         `_find_companies` already dropped platforms, non-public URLs, and
-        repeat domains before calling this, so it only has to fetch the
-        page and look for a contact. Picking the named decision-maker
-        instead of the first address on the page (the plan's "not info@"
-        requirement) is the next increment, not yet built.
+        repeat domains before calling this. `find_decision_maker` tries the
+        homepage plus a few guessed About/Team paths for a name next to an
+        owner/founder/director role word; only when that heuristic finds
+        nothing anywhere does this fall back to `pick_contact_email`'s
+        wider "any address on the company's own domain" rule, which is how
+        `info@` can still end up here.
         """
 
         base = dict(
@@ -220,6 +224,20 @@ class WebSearchPeopleSearch:
 
         if not _on_topic(hypothesis, company.snippet):
             return TraceFinding(**base, reject_reason="trace is not about this hypothesis")
+
+        decision_maker = find_decision_maker(company.url, company.registrable_domain, self._page_fetcher)
+        if decision_maker is not None:
+            hit = PeopleHit(
+                identity=decision_maker.email,
+                observed_fact=decision_maker.evidence_quote,
+                observed_source=decision_maker.source_url,
+                channel="email",
+                source_kind="business",
+            )
+            return TraceFinding(
+                **{**base, "raw_text": decision_maker.evidence_quote, "url": decision_maker.source_url},
+                hit=hit,
+            )
 
         try:
             page_text = self._page_fetcher(company.url)

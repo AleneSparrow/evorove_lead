@@ -6,6 +6,7 @@ from evorove_lead.engine import GenerationStatus, LeadGenerationEngine
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, IntentTrigger
 from evorove_lead.materials import DepositedMaterial
 from evorove_lead.offer_reader import read_offer
+from evorove_lead.presence import PresenceRejected
 from evorove_lead.search import PeopleHit
 from evorove_lead.selection import COMPETITOR, NOT_TIED, SOURCE_KIND_BUSINESS, SelectionProfile, select
 from evorove_lead.warehouse import RecordingAnalysisWarehouse
@@ -88,7 +89,13 @@ def test_b2b_connector_takes_company_sites_and_skips_directories() -> None:
         "https://www.tonys-pizza.com/": "Tony's restaurant. Contact: hello@tonys-pizza.com",
         "https://www.yelp.com/biz/tonys": "info@yelp.com",
     }
-    findings = WebSearchPeopleSearch(Client(), page_fetcher=pages.__getitem__).find(_business_hypothesis())
+
+    def fetch(url: str) -> str:
+        if url not in pages:
+            raise PresenceRejected("no such page")
+        return pages[url]
+
+    findings = WebSearchPeopleSearch(Client(), page_fetcher=fetch).find(_business_hypothesis())
     assert findings[0].hit is not None and findings[0].hit.identity == "hello@tonys-pizza.com"
     assert findings[0].hit.source_kind == "business"
     assert findings[1].hit is None and findings[1].reject_reason == "not the company's own website"
