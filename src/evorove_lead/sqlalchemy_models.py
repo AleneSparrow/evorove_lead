@@ -253,6 +253,21 @@ class SearchTargetRow(Base):
     last_cold = Column(Integer, nullable=False, default=0)
 
 
+class MarketSignalRow(Base):
+    """One news item already checked against one business (track 4's dedup)."""
+
+    __tablename__ = "market_signals"
+
+    business_id = Column(String(128), primary_key=True)
+    source_url = Column(Text, primary_key=True)
+    snippet = Column(Text, nullable=False, default="")
+    relevant = Column(Boolean, nullable=False)
+    segment_label = Column(Text, nullable=False, default="")
+    channel = Column(String(32), nullable=False, default="")
+    evidence_quote = Column(Text, nullable=False, default="")
+    checked_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class CrmDeliveryRow(Base):
     """Outbox queue: CRM lead-touches CRM has not accepted yet.
 

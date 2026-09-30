@@ -10,7 +10,18 @@ CEO/Director на главной или угаданной странице Abou
 обобщённый адрес (info@ и т.п.) — только когда оба не нашли никого, в ход
 идёт старый широкий `pick_contact_email` ("любой адрес на домене компании").
 Один и тот же `AI_PROVIDER=anthropic` включает LLM и для модуля 1, и для
-модуля 3.
+модуля 3. Трек 4 (ежедневный мониторинг рынка) — в коде: своя таблица
+`market_signals` (дедуп по business_id+URL, чтобы одну новость не
+перепроверять и не переоплачивать дважды), поиск отраслевых/рыночных
+новостей вообще (не по конкретным компаниям), LLM-фильтр релевантности
+с заземлением на дословную цитату (тот же `AI_PROVIDER`), и подключение к
+модулю 1 через новый параметр `extra_hypotheses` у `engine.generate()` —
+сигнал становится обычной `Hypothesis` (`intent_trigger.kind="market_signal"`,
+`audience_source="ai_inferred"`) и сразу прогоняется через существующий
+конвейер поиск→кандидат→доставка, а не отдельным путём. Свой internal-
+эндпоинт `POST /api/v1/internal/market-signals/run-due`, независимый от
+20-часового окна `run_due` для обычного поиска — Railway-cron (по образцу
+`evorove-sweep-cron`) владелец настраивает сама.
 **Основа:** [`/Users/alenakulish/dev/evorove/FOUNDATION.md`](/Users/alenakulish/dev/evorove/FOUNDATION.md), [`docs/cycle-1-contract.md`](cycle-1-contract.md)
 
 ---

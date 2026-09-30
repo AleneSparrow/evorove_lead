@@ -29,6 +29,7 @@ INTENT_TRIGGER_KINDS = (
     "need_statement",
     "demographic_fit",
     "business_listing",
+    "market_signal",
 )
 
 
@@ -39,6 +40,9 @@ class IntentTrigger:
     `demographic_fit` is a profile guess: they look like the named audience.
     `business_listing` is B2B (step 18): companies of the named kind in the
     client's area, found through their own websites.
+    `market_signal` (track 4) is a piece of industry/market news the LLM
+    judged as a live reason to search now -- distinct from `public_ask` and
+    `need_statement`, which come from one person's own post, not a news item.
     The other three are signals that someone has an open need right now.
     """
 

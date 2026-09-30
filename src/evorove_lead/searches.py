@@ -21,11 +21,14 @@ from sqlalchemy.orm import Session, sessionmaker
 from evorove_lead.business import BusinessSeed
 from evorove_lead.decision_maker_llm import decision_maker_completion_from_env
 from evorove_lead.engine import GenerationStatus, LeadGenerationEngine
+from evorove_lead.hypothesis import GeoRadius
 from evorove_lead.marketing_analysis import marketing_analyzer_from_env
+from evorove_lead.market_signal_llm import MarketSignalCompletion
+from evorove_lead.market_signals import MarketSignalStore, check_signals_for_business
 from evorove_lead.presence import HttpPresenceSource
 from evorove_lead.sqlalchemy_models import SearchTargetRow
 from evorove_lead.web_people_search import WebSearchPeopleSearch
-from evorove_lead.web_search import client_from_env
+from evorove_lead.web_search import WebSearchClient, client_from_env
 
 LOGGER = logging.getLogger(__name__)
 RERUN_AFTER = timedelta(hours=20)  # a daily cron always finds yesterday's targets due
@@ -49,6 +52,8 @@ class SearchTargetStore(Protocol):
 
     def due(self, now: datetime) -> Sequence[SearchTarget]: ...
 
+    def all_targets(self) -> Sequence[SearchTarget]: ...
+
 
 class InMemorySearchTargetStore:
     def __init__(self) -> None:
@@ -62,6 +67,9 @@ class InMemorySearchTargetStore:
 
     def due(self, now: datetime) -> Sequence[SearchTarget]:
         return tuple(t for t in self.targets.values() if _is_due(t, now))
+
+    def all_targets(self) -> Sequence[SearchTarget]:
+        return tuple(self.targets.values())
 
 
 class SqlAlchemySearchTargetStore:
@@ -77,6 +85,11 @@ class SqlAlchemySearchTargetStore:
         with self._session_factory() as session:
             row = session.get(SearchTargetRow, business_id)
             return _from_row(row) if row is not None else None
+
+    def all_targets(self) -> Sequence[SearchTarget]:
+        with self._session_factory() as session:
+            rows = session.scalars(select(SearchTargetRow)).all()
+            return tuple(_from_row(row) for row in rows)
 
     def due(self, now: datetime) -> Sequence[SearchTarget]:
         with self._session_factory() as session:
@@ -154,6 +167,55 @@ def run_due(store: SearchTargetStore, engine: LeadGenerationEngine, now: datetim
         ran += 1
         cold += outcome.last_cold
     return {"ran": ran, "cold": cold}
+
+
+def run_due_market_signals(
+    targets: SearchTargetStore,
+    signal_store: MarketSignalStore,
+    web_search_client: WebSearchClient,
+    llm: MarketSignalCompletion,
+    engine: LeadGenerationEngine,
+) -> dict[str, int]:
+    """Track 4's own daily cron: check every remembered business for market news.
+
+    Independent of `run_due`'s 20-hour rerun window -- every registered
+    business is checked every time this runs, since `market_signals.py`'s
+    own dedup (one row per business_id + source_url) already stops the
+    same news item from being re-billed. A business with no relevant news
+    today costs one cheap search and, if `AI_PROVIDER=anthropic`, one small
+    LLM call per unseen headline -- never a full search run.
+
+    A signal-triggered run also re-derives that business's normal offer/
+    marketing analysis (the same cost `run_due` already pays on its own
+    schedule) -- accepted here for simplicity; the identity-dedup in
+    `_generate_via_hypotheses` means no duplicate candidate ever reaches
+    Cold twice, so the only cost is a second LLM call on a day both crons
+    happen to fire for the same business.
+    """
+
+    checked = triggered = cold = 0
+    for target in targets.all_targets():
+        hypotheses = check_signals_for_business(
+            target.business_id, target.business_archetype, GeoRadius(), web_search_client, signal_store, llm
+        )
+        checked += 1
+        if not hypotheses:
+            continue
+        triggered += 1
+        try:
+            result = engine.generate(
+                BusinessSeed(
+                    site_url=target.site_url,
+                    business_id=target.business_id,
+                    business_archetype=target.business_archetype,
+                ),
+                extra_hypotheses=hypotheses,
+            )
+        except Exception:  # noqa: BLE001 -- one business's failure must not stop the sweep
+            LOGGER.exception("market_signal_run_failed business_id=%s", target.business_id)
+            continue
+        cold += len(result.handoffs)
+    return {"checked": checked, "triggered": triggered, "cold": cold}
 
 
 def main() -> int:

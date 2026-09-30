@@ -8,9 +8,18 @@ from sqlalchemy import create_engine
 
 from evorove_lead.api import create_app
 from evorove_lead.engine import GenerationResult, GenerationStatus
-from evorove_lead.searches import InMemorySearchTargetStore, SqlAlchemySearchTargetStore, SearchTarget, run_due
+from evorove_lead.market_signal_llm import ScriptedMarketSignalCompletion
+from evorove_lead.market_signals import InMemoryMarketSignalStore
+from evorove_lead.searches import (
+    InMemorySearchTargetStore,
+    SqlAlchemySearchTargetStore,
+    SearchTarget,
+    run_due,
+    run_due_market_signals,
+)
 from evorove_lead.sqlalchemy_warehouse import create_all
 from evorove_lead.warehouse import RecordingAnalysisWarehouse
+from evorove_lead.web_search import SearchHit
 
 HEADERS = {"X-Internal-Task-Secret": "local_development_only"}
 
@@ -23,10 +32,12 @@ def _secret(monkeypatch):
 class FakeEngine:
     def __init__(self, cold: int = 2, fail: bool = False) -> None:
         self.seeds = []
+        self.extra_hypotheses_seen = []
         self.cold, self.fail = cold, fail
 
-    def generate(self, seed):
+    def generate(self, seed, *, extra_hypotheses=()):
         self.seeds.append(seed)
+        self.extra_hypotheses_seen.append(extra_hypotheses)
         if self.fail:
             raise RuntimeError("search provider down")
         return GenerationResult(
@@ -101,3 +112,84 @@ def test_cron_command_runs_due_sites(monkeypatch, capsys) -> None:
     assert '"cold": 2' in capsys.readouterr().out
     monkeypatch.setattr(searches, "live_engine", lambda: None)
     assert searches.main() == 1
+
+
+class _FakeWebSearchClient:
+    def __init__(self, hits: tuple[SearchHit, ...]) -> None:
+        self.hits = hits
+        self.queries: list[str] = []
+
+    def search(self, query: str):
+        self.queries.append(query)
+        return self.hits
+
+
+def _relevant_payload(evidence_quote: str = "New licensing rules") -> str:
+    import json
+
+    return json.dumps(
+        {
+            "relevant": True,
+            "segment_label": "salons hiring booth renters as employees",
+            "channel": "industry_sites",
+            "evidence_quote": evidence_quote,
+        }
+    )
+
+
+def test_run_due_market_signals_triggers_a_search_for_a_relevant_signal() -> None:
+    targets = InMemorySearchTargetStore()
+    targets.save(SearchTarget("tenant-a", "https://acme.com/", "salon software", datetime.now(timezone.utc)))
+    signal_store = InMemoryMarketSignalStore()
+    web_client = _FakeWebSearchClient((SearchHit(url="https://news.example/1", snippet="New licensing rules"),))
+    llm = ScriptedMarketSignalCompletion(_relevant_payload())
+    engine = FakeEngine(cold=1)
+
+    result = run_due_market_signals(targets, signal_store, web_client, llm, engine)
+
+    assert result == {"checked": 1, "triggered": 1, "cold": 1}
+    assert len(engine.extra_hypotheses_seen[0]) == 1
+    assert engine.extra_hypotheses_seen[0][0].intent_trigger.kind == "market_signal"
+    assert signal_store.seen("tenant-a", "https://news.example/1")
+
+
+def test_run_due_market_signals_skips_a_business_with_no_relevant_news() -> None:
+    targets = InMemorySearchTargetStore()
+    targets.save(SearchTarget("tenant-a", "https://acme.com/", "salon software", datetime.now(timezone.utc)))
+    signal_store = InMemoryMarketSignalStore()
+    web_client = _FakeWebSearchClient((SearchHit(url="https://news.example/1", snippet="Unrelated sports news"),))
+    llm = ScriptedMarketSignalCompletion(_relevant_payload())  # evidence_quote won't ground on this snippet
+    engine = FakeEngine(cold=5)
+
+    result = run_due_market_signals(targets, signal_store, web_client, llm, engine)
+
+    assert result == {"checked": 1, "triggered": 0, "cold": 0}
+    assert engine.seeds == []
+
+
+def test_run_due_market_signals_does_not_re_check_a_seen_url_next_run() -> None:
+    targets = InMemorySearchTargetStore()
+    targets.save(SearchTarget("tenant-a", "https://acme.com/", "salon software", datetime.now(timezone.utc)))
+    signal_store = InMemoryMarketSignalStore()
+    web_client = _FakeWebSearchClient((SearchHit(url="https://news.example/1", snippet="New licensing rules"),))
+    llm = ScriptedMarketSignalCompletion(_relevant_payload())
+    engine = FakeEngine(cold=1)
+
+    run_due_market_signals(targets, signal_store, web_client, llm, engine)
+    second = run_due_market_signals(targets, signal_store, web_client, llm, engine)
+
+    assert second == {"checked": 1, "triggered": 0, "cold": 0}
+
+
+def test_run_due_market_signals_one_business_failing_does_not_stop_the_sweep() -> None:
+    targets = InMemorySearchTargetStore()
+    targets.save(SearchTarget("tenant-a", "https://a.com/", "salon software", datetime.now(timezone.utc)))
+    targets.save(SearchTarget("tenant-b", "https://b.com/", "salon software", datetime.now(timezone.utc)))
+    signal_store = InMemoryMarketSignalStore()
+    web_client = _FakeWebSearchClient((SearchHit(url="https://news.example/1", snippet="New licensing rules"),))
+    llm = ScriptedMarketSignalCompletion(_relevant_payload())
+    engine = FakeEngine(cold=1, fail=True)
+
+    result = run_due_market_signals(targets, signal_store, web_client, llm, engine)
+
+    assert result == {"checked": 2, "triggered": 2, "cold": 0}

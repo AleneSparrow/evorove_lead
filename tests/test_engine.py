@@ -389,6 +389,61 @@ def test_engine_runs_the_full_hypothesis_pipeline_to_cold() -> None:
     assert len(crm_sink.published) == 1
 
 
+def test_engine_runs_an_extra_hypothesis_alongside_the_built_set() -> None:
+    """Track 4's hook: a market-signal hypothesis runs through the same pipeline."""
+
+    from evorove_lead.crm_touch import RecordingLeadTouchSink
+    from evorove_lead.hypothesis import GeoRadius, Hypothesis, IntentTrigger
+    from evorove_lead.search import TraceFinding
+    from evorove_lead.warehouse import RecordingAnalysisWarehouse
+
+    signal_hypothesis = Hypothesis(
+        audience_segment="event planners scrambling for weekend catering",
+        channel="industry_sites",
+        query_template="event planners scrambling for weekend catering",
+        intent_trigger=IntentTrigger(kind="market_signal", description="a local venue closure"),
+        geo_radius=GeoRadius(),
+        audience_source="ai_inferred",
+        evidence_quote="a local event venue's kitchen closed this week",
+    )
+
+    class FakeHypothesisSearch:
+        connected = True
+
+        def find(self, hypothesis):
+            if hypothesis.intent_trigger.kind != "market_signal":
+                return ()
+            return (
+                TraceFinding(
+                    url="https://industry-news.example/thread",
+                    raw_text="Event planner asks for weekend catering after a venue closure",
+                    query_used=hypothesis.query_template,
+                    source_channel=hypothesis.channel,
+                    hit=PeopleHit(
+                        identity="planner@example-events.com",
+                        observed_fact="Needs weekend catering for busy parents' events after a venue closure.",
+                        observed_source="https://industry-news.example/thread",
+                        channel="email",
+                    ),
+                ),
+            )
+
+    warehouse = RecordingAnalysisWarehouse()
+    seed = BusinessSeed(site_url=SITE, business_id="tenant-signal")
+
+    result = LeadGenerationEngine(
+        presence=FakePresence(),
+        hypothesis_search=FakeHypothesisSearch(),
+        warehouse=warehouse,
+        lead_touch_sink=RecordingLeadTouchSink(),
+    ).generate(seed, extra_hypotheses=(signal_hypothesis,))
+
+    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert any(c.identity == "planner@example-events.com" for c in result.candidates)
+    kinds = {h.intent_trigger for h in warehouse.hypotheses}
+    assert any(k == "market_signal" for k in kinds)
+
+
 def test_engine_hypothesis_pipeline_puts_hypothesis_id_on_the_handoff_and_crm_touch() -> None:
     """Phase 3 prerequisite: hypothesis_id must ride the handoff to Cold, not just the warehouse."""
 

@@ -19,11 +19,13 @@ from __future__ import annotations
 import hmac
 import os
 from datetime import datetime, timezone
-from typing import Annotated, Literal
+from typing import Annotated, Callable, Literal
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from evorove_lead.market_signal_llm import MarketSignalCompletion, market_signal_completion_from_env
+from evorove_lead.market_signals import MarketSignalStore, market_signal_store_from_env
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
 from evorove_lead.searches import (
     EngineFactory,
@@ -31,9 +33,11 @@ from evorove_lead.searches import (
     SearchTargetStore,
     live_engine,
     run_due,
+    run_due_market_signals,
     run_target,
     search_targets_from_env,
 )
+from evorove_lead.web_search import WebSearchClient, client_from_env
 
 from evorove_lead.crm_touch import CrmDeliveryStore, http_sink_from_env, redeliver_pending
 from evorove_lead.insights import register_insights_routes
@@ -82,11 +86,15 @@ def create_app(
     targets: SearchTargetStore | None = None,
     engine_factory: EngineFactory | None = None,
     delivery_store: CrmDeliveryStore | None = None,
+    signal_store: MarketSignalStore | None = None,
+    signal_web_search_client_factory: Callable[[], WebSearchClient | None] = client_from_env,
+    signal_llm_factory: Callable[[], MarketSignalCompletion | None] = market_signal_completion_from_env,
 ) -> FastAPI:
     app = FastAPI(title="evorove_lead internal API")
     store = warehouse if warehouse is not None else warehouse_from_env()
     search_targets = targets if targets is not None else search_targets_from_env()
     deliveries = delivery_store if delivery_store is not None else crm_delivery_store_from_env()
+    signals = signal_store if signal_store is not None else market_signal_store_from_env()
     make_engine = engine_factory or live_engine
     register_insights_routes(app, store)
 
@@ -95,6 +103,18 @@ def create_app(
         if engine is None:
             raise HTTPException(status_code=503, detail="people search is not connected (WEB_SEARCH_BASE_URL)")
         return engine
+
+    def _market_signal_deps_or_503() -> tuple[WebSearchClient, MarketSignalCompletion]:
+        client = signal_web_search_client_factory()
+        if client is None:
+            raise HTTPException(status_code=503, detail="people search is not connected (WEB_SEARCH_BASE_URL)")
+        llm = signal_llm_factory()
+        if llm is None:
+            raise HTTPException(
+                status_code=503,
+                detail="market signal reading is not enabled (AI_PROVIDER=anthropic required)",
+            )
+        return client, llm
 
     @app.post("/api/v1/internal/searches", status_code=202)
     def start_search(
@@ -141,6 +161,16 @@ def create_app(
     ) -> dict[str, int]:
         _require_task_secret(x_internal_task_secret)
         return run_due(search_targets, _engine_or_503())
+
+    @app.post("/api/v1/internal/market-signals/run-due")
+    def run_due_market_signals_route(
+        x_internal_task_secret: Annotated[str | None, Header()] = None,
+    ) -> dict[str, int]:
+        """Track 4's own daily cron entry point -- see run_due_market_signals."""
+
+        _require_task_secret(x_internal_task_secret)
+        client, llm = _market_signal_deps_or_503()
+        return run_due_market_signals(search_targets, signals, client, llm, _engine_or_503())
 
     @app.get("/api/v1/internal/crm-deliveries/status")
     def crm_delivery_status(

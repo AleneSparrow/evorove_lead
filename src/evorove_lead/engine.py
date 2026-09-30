@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
+from typing import Sequence
 
 from evorove_lead.business import BusinessSeed
 from evorove_lead.candidate import Candidate, CandidateRejected, accept_candidate
@@ -116,7 +117,13 @@ class LeadGenerationEngine:
         # replaces those search audiences with grounded inferences.
         self._marketing_analyzer = marketing_analyzer
 
-    def generate(self, seed: BusinessSeed) -> GenerationResult:
+    def generate(
+        self, seed: BusinessSeed, *, extra_hypotheses: Sequence[Hypothesis] = ()
+    ) -> GenerationResult:
+        # `extra_hypotheses` is track 4's hook: a market-signal run appends
+        # one ad-hoc, already-built Hypothesis here instead of re-deriving
+        # the whole offer/analysis-driven set for a single news event. Empty
+        # by default -- every existing caller is unaffected.
         empty = GenerationResult(
             status=GenerationStatus.NEED_PRESENCE,
             offer=None,
@@ -158,10 +165,14 @@ class LeadGenerationEngine:
                     handoffs=(),
                     rejected=(),
                 )
-            return self._generate_via_hypotheses(seed, offer, materials, analysis)
+            return self._generate_via_hypotheses(
+                seed, offer, materials, analysis, extra_hypotheses=extra_hypotheses
+            )
 
         if self._hypothesis_search is not None:
-            return self._generate_via_hypotheses(seed, offer, materials)
+            return self._generate_via_hypotheses(
+                seed, offer, materials, extra_hypotheses=extra_hypotheses
+            )
 
         if not self._policy.may_seek_people(
             offer=offer, search_connected=self._people_search.connected
@@ -285,6 +296,8 @@ class LeadGenerationEngine:
         offer: OfferUnderstanding,
         materials: tuple[DepositedMaterial, ...],
         analysis: MarketingAnalysis | None = None,
+        *,
+        extra_hypotheses: Sequence[Hypothesis] = (),
     ) -> GenerationResult:
         """Phase 2's real path: hypothesis -> query -> trace -> re-analysis -> Cold.
 
@@ -346,6 +359,7 @@ class LeadGenerationEngine:
                 pattern_library=self._pattern_library,
                 business_archetype=seed.business_archetype,
             )
+        hypotheses = (*hypotheses, *extra_hypotheses)
         for hypothesis in hypotheses:
             hypothesis_id = new_id("hypothesis") if business_id else ""
             findings = tuple(self._hypothesis_search.find(hypothesis))
