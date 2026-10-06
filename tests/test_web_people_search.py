@@ -272,7 +272,7 @@ def test_business_listing_uses_the_llm_fallback_when_the_heuristic_finds_no_one(
     assert findings[0].hit.identity == "jane@tonys-pizza.com"
 
 
-def test_business_listing_falls_back_to_pick_contact_email_when_llm_also_finds_no_one():
+def test_business_listing_drops_the_page_when_the_llm_finds_no_one():
     hypothesis = _business_hypothesis()
     client = FakeClient(
         (SearchHit(url="https://www.tonys-pizza.com/", snippet="Restaurants in Austin"),)
@@ -289,5 +289,5 @@ def test_business_listing_falls_back_to_pick_contact_email_when_llm_also_finds_n
     findings = connector.find(hypothesis)
 
     assert len(findings) == 1
-    assert findings[0].hit is not None
-    assert findings[0].hit.identity == "hello@tonys-pizza.com"
+    assert findings[0].hit is None
+    assert findings[0].reject_reason == "no grounded person on this page"

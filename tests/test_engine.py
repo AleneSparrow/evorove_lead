@@ -194,6 +194,43 @@ def test_empty_owner_observations_are_no_fit_not_a_web_directory(
     assert result.offer is not None
 
 
+def test_grounded_email_becomes_a_cold_touch_and_a_blank_reason_is_dropped() -> None:
+    """Cycle 1 hands one Cold touch to CRM and never sends a message."""
+    from evorove_lead.crm_touch import RecordingLeadTouchSink
+
+    search = FakePeopleSearch(
+        (
+            PeopleHit(
+                identity="Jordan Lee, jordan@example-bakery.com",
+                observed_fact="Already advertises weekend catering to nearby families.",
+                observed_source="https://directory.example/jordan",
+                channel="email",
+            ),
+            PeopleHit(
+                identity="pat@example-bakery.com",
+                observed_fact="   ",
+                observed_source="https://directory.example/pat",
+                channel="email",
+            ),
+        )
+    )
+    sink = RecordingLeadTouchSink()
+    seed = BusinessSeed(site_url=SITE, business_id="tenant-a")
+    result = LeadGenerationEngine(
+        presence=FakePresence(), people_search=search, lead_touch_sink=sink
+    ).generate(seed)
+
+    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert result.sent_messages == ()
+    assert [item.identity for item in result.rejected] == ["pat@example-bakery.com"]
+    assert len(sink.published) == 1
+    business_id, payload = sink.published[0]
+    assert business_id == "tenant-a"
+    assert payload["kind"] == "assembled"
+    assert payload["identity"]["email"] == "jordan@example-bakery.com"
+    assert payload["payload"]["reason"] == "Already advertises weekend catering to nearby families."
+
+
 def test_engine_reports_assembled_people_to_crm_sink() -> None:
     from evorove_lead.crm_touch import RecordingLeadTouchSink
     from evorove_lead.business import BusinessSeed

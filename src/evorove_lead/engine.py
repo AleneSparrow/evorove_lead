@@ -427,7 +427,8 @@ class LeadGenerationEngine:
                     )
                 if business_id and (phone or email):
                     self._lead_touch_sink.publish(
-                        business_id, assembled_touch(business_id, candidate, handoff)
+                        business_id,
+                        assembled_touch(business_id, candidate, handoff, segment=hypothesis.audience_segment),
                     )
 
         status = GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT

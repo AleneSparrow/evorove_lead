@@ -257,6 +257,11 @@ class WebSearchPeopleSearch:
                 hit=hit,
             )
 
+        # Anthropic is the reader when it is configured. A failed reading is
+        # not replaced with a slice of the page or a generic inbox address.
+        if self._decision_maker_llm is not None:
+            return TraceFinding(**base, reject_reason="no grounded person on this page")
+
         homepage_text = dict(pages).get(company.url)
         if homepage_text is not None:
             page_text = homepage_text

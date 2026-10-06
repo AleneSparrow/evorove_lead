@@ -298,7 +298,13 @@ def split_identity(blob: str) -> tuple[str | None, str | None, str | None]:
     return name, phone, email
 
 
-def assembled_touch(business_id: str, candidate: Candidate, handoff: Cycle1Handoff) -> dict[str, object]:
+def assembled_touch(
+    business_id: str,
+    candidate: Candidate,
+    handoff: Cycle1Handoff,
+    *,
+    segment: str | None = None,
+) -> dict[str, object]:
     name, phone, email = split_identity(candidate.identity)
     person_id = handoff.person_id or stable_person_id(
         business_id, phone=phone, email=email, identity=candidate.identity
@@ -322,5 +328,6 @@ def assembled_touch(business_id: str, candidate: Candidate, handoff: Cycle1Hando
             # warehouse. Empty when the bridge path (no real Hypothesis
             # yet) produced this handoff.
             "hypothesis_id": handoff.hypothesis_id,
+            "segment": (segment or "").strip(),
         },
     }
