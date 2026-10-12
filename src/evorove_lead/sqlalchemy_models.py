@@ -162,6 +162,7 @@ class CandidateRow(Base):
     addressable = Column(Boolean, nullable=False)
     decision = Column(String(16), nullable=False)
     decided_at = Column(DateTime(timezone=True), nullable=False)
+    evidence_class = Column(String(32), nullable=False, default="")
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_candidates_business_id_id"),
@@ -251,6 +252,7 @@ class SearchTargetRow(Base):
     last_run_at = Column(DateTime(timezone=True), nullable=True)
     last_status = Column(String(32), nullable=False, default="queued")
     last_cold = Column(Integer, nullable=False, default=0)
+    last_cost = Column(Text, nullable=False, default="")
 
 
 class MarketSignalRow(Base):
@@ -289,3 +291,26 @@ class CrmDeliveryRow(Base):
     __table_args__ = (
         UniqueConstraint("business_id", "touch_id", name="uq_crm_deliveries_business_touch"),
     )
+
+
+class ColdIdentityClaimRow(Base):
+    """One Cold contact per tenant. The insert is the lock against a double handoff."""
+
+    __tablename__ = "cold_identity_claims"
+
+    business_id = Column(String(128), primary_key=True)
+    identity_key = Column(String(320), primary_key=True)
+    claimed_at = Column(DateTime(timezone=True), nullable=False)
+
+
+class PipelineSpendRow(Base):
+    """Lifetime LLM and search counters for one business. No contact data."""
+
+    __tablename__ = "pipeline_spend"
+
+    business_id = Column(String(128), primary_key=True)
+    llm_calls = Column(Integer, nullable=False, default=0)
+    search_requests = Column(Integer, nullable=False, default=0)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    unknown_price = Column(Boolean, nullable=False, default=False)

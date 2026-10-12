@@ -5,14 +5,26 @@ Does not message the person, book a slot, or run a sales conversation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Sequence
 
 from evorove_lead.business import BusinessSeed
 from evorove_lead.candidate import Candidate, CandidateRejected, accept_candidate
-from evorove_lead.selection import Selection, SelectionProfile, select
+from evorove_lead.cost_control import BudgetExhausted, RunLedger, client_budget_blocked
+from evorove_lead.qualification import confirm_inferred, qualify
+from evorove_lead.ranking import rank_score
+from evorove_lead.selection import (
+    ICP_MATCH,
+    INFERRED_OPPORTUNITY,
+    INSUFFICIENT_EVIDENCE,
+    KEYWORD_ONLY,
+    SOURCE_KIND_BUSINESS,
+    Selection,
+    SelectionProfile,
+    select,
+)
 from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.geo import infer_geo_radius
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, build_hypotheses, verify_hypothesis
@@ -45,6 +57,7 @@ from evorove_lead.warehouse import (
     CandidateRecord,
     HypothesisRecord,
     RejectedTraceRecord,
+    SpendRecord,
     TraceRecord,
     new_id,
 )
@@ -71,6 +84,8 @@ class GenerationResult:
     candidates: tuple[Candidate, ...]
     handoffs: tuple[Cycle1Handoff, ...]
     rejected: tuple[RejectedHit, ...]
+    cost: dict | None = None
+    stopped_reason: str = ""
 
     @property
     def sent_messages(self) -> tuple[()]:
@@ -92,6 +107,8 @@ class LeadGenerationEngine:
         pattern_library: PatternLibrary | None = None,
         infer_geo_radius_from_brief: bool = False,
         marketing_analyzer: MarketingAnalyzer | None = None,
+        run_budget: RunLedger | None = None,
+        classifier=None,
     ) -> None:
         self._presence = presence
         self._people_search = people_search or UnconnectedPeopleSearch()
@@ -116,6 +133,11 @@ class LeadGenerationEngine:
         # None keeps the literal "serves X" audience path. A set analyzer
         # replaces those search audiences with grounded inferences.
         self._marketing_analyzer = marketing_analyzer
+        self._budget = run_budget
+        # Optional cheap confirmer for inferred rows. None keeps selection deterministic.
+        self._classifier = classifier
+        self._stopped = ""
+        self._accounted = SpendRecord(business_id="")
 
     def generate(
         self, seed: BusinessSeed, *, extra_hypotheses: Sequence[Hypothesis] = ()
@@ -141,6 +163,7 @@ class LeadGenerationEngine:
             return empty
 
         analysis: MarketingAnalysis | None = None
+        offer = None
         try:
             if self._marketing_analyzer is not None:
                 offer = read_offer(materials, require_audience=False)
@@ -148,12 +171,31 @@ class LeadGenerationEngine:
             else:
                 offer = read_offer(materials)
         except (OfferRejected, MarketingAnalysisRejected):
-            return GenerationResult(
-                status=GenerationStatus.OFFER_INCOMPLETE,
-                offer=None,
-                candidates=(),
-                handoffs=(),
-                rejected=(),
+            return self._finish(
+                GenerationResult(
+                    status=GenerationStatus.OFFER_INCOMPLETE,
+                    offer=None,
+                    candidates=(),
+                    handoffs=(),
+                    rejected=(),
+                ),
+                processed=0,
+                qualified=0,
+                business_id=seed.business_id,
+            )
+        except BudgetExhausted:
+            self._stopped = self._budget.stopped_reason if self._budget else "budget_exhausted"
+            return self._finish(
+                GenerationResult(
+                    status=GenerationStatus.NO_FIT,
+                    offer=offer,
+                    candidates=(),
+                    handoffs=(),
+                    rejected=(),
+                ),
+                processed=0,
+                qualified=0,
+                business_id=seed.business_id,
             )
 
         if analysis is not None:
@@ -185,60 +227,59 @@ class LeadGenerationEngine:
                 rejected=(),
             )
 
+        blocked = self._finish_if_blocked(seed.business_id, offer)
+        if blocked is not None:
+            return blocked
+        try:
+            self._charge_search()
+        except BudgetExhausted:
+            return self._stopped_result(offer, seed.business_id)
+
         hypothesis_id = self._record_brief_and_hypothesis(seed, offer)
         profile = SelectionProfile.from_offer(offer, materials)
         seen_identities = self._already_handed_over(seed.business_id)
 
-        accepted: list[Candidate] = []
-        handoffs: list[Cycle1Handoff] = []
+        ranked: list[tuple[float, Candidate, Cycle1Handoff]] = []
         rejected: list[RejectedHit] = []
         for hit in self._people_search.find(offer):
             if hypothesis_id:
                 self._warehouse.save_trace(_hit_to_trace_record(seed.business_id, hypothesis_id, hit))
-            try:
-                candidate, selection = _accept_hit(hit, profile)
-                _not_seen_before(candidate, seen_identities)
-            except CandidateRejected as exc:
-                rejected.append(RejectedHit(identity=hit.identity, why=str(exc)))
+            candidate, selection = _judge_hit(hit, profile, self._classifier)
+            if candidate is None:
+                rejected.append(RejectedHit(identity=hit.identity, why=selection.why))
                 if hypothesis_id:
                     self._warehouse.save_candidate(
                         _rejected_hit_to_candidate_record(
-                            seed.business_id, hypothesis_id, hit, str(exc)
+                            seed.business_id, hypothesis_id, hit, selection.why, selection.evidence_class
                         )
                     )
                 continue
-            accepted.append(candidate)
-            name, phone, email = split_identity(candidate.identity)
-            person_id = (
-                stable_person_id(seed.business_id, phone=phone, email=email, identity=candidate.identity)
-                if seed.business_id
-                else ""
+            if not _remember(candidate, seen_identities):
+                self._reject_duplicate(seed.business_id, hypothesis_id, hit, rejected)
+                continue
+            if seed.business_id and not self._warehouse.claim_cold_identity(
+                seed.business_id, candidate.identity
+            ):
+                self._reject_duplicate(seed.business_id, hypothesis_id, hit, rejected)
+                continue
+            handoff = self._keep(
+                seed.business_id, hypothesis_id, candidate, hit, selection, ranked, segment=None
             )
-            handoff = Cycle1Handoff.from_candidate(
-                candidate, hit.channel, person_id=person_id, hypothesis_id=hypothesis_id
-            )
-            handoffs.append(handoff)
-            if hypothesis_id:
-                self._warehouse.save_candidate(
-                    _candidate_to_record(
-                        seed.business_id, hypothesis_id, candidate, email=email, phone=phone, selection=selection
-                    )
-                )
-            if seed.business_id and (phone or email):
-                self._lead_touch_sink.publish(
-                    seed.business_id,
-                    assembled_touch(seed.business_id, candidate, handoff),
-                )
+            del handoff
 
-        status = (
-            GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT
-        )
-        return GenerationResult(
-            status=status,
-            offer=offer,
-            candidates=tuple(accepted),
-            handoffs=tuple(handoffs),
-            rejected=tuple(rejected),
+        accepted, handoffs = _ordered(ranked)
+        status = GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT
+        return self._finish(
+            GenerationResult(
+                status=status,
+                offer=offer,
+                candidates=accepted,
+                handoffs=handoffs,
+                rejected=tuple(rejected),
+            ),
+            processed=len(accepted) + len(rejected),
+            qualified=len(accepted),
+            business_id=seed.business_id,
         )
 
     def _record_brief_and_hypothesis(self, seed: BusinessSeed, offer: OfferUnderstanding) -> str:
@@ -301,10 +342,9 @@ class LeadGenerationEngine:
     ) -> GenerationResult:
         """Phase 2's real path: hypothesis -> query -> trace -> re-analysis -> Cold.
 
-        `candidate.py`'s own selection logic (`_accept_hit`) is unchanged --
-        this only supplies it real hits instead of a JSONL stub, per the
-        contract's "прогнать существующую логику... без изменения самой
-        логики отбора."
+        Selection still decides Cold. This path only supplies real hits,
+        skips a pattern the warehouse has already paused, and stops when
+        the run budget is spent.
         """
 
         if not self._hypothesis_search.connected:
@@ -315,6 +355,9 @@ class LeadGenerationEngine:
                 handoffs=(),
                 rejected=(),
             )
+        blocked = self._finish_if_blocked(seed.business_id, offer)
+        if blocked is not None:
+            return blocked
 
         business_id = seed.business_id
         now = datetime.now(timezone.utc)
@@ -331,8 +374,7 @@ class LeadGenerationEngine:
                 )
             )
 
-        accepted: list[Candidate] = []
-        handoffs: list[Cycle1Handoff] = []
+        ranked: list[tuple[float, Candidate, Cycle1Handoff]] = []
         rejected: list[RejectedHit] = []
         # Different hypotheses can turn up the same public post -- one
         # person addressed once, not once per hypothesis that noticed them
@@ -361,8 +403,21 @@ class LeadGenerationEngine:
             )
         hypotheses = (*hypotheses, *extra_hypotheses)
         for hypothesis in hypotheses:
+            if self._stopped:
+                break
+            if _pattern_paused(self._warehouse, business_id, hypothesis):
+                continue
+            try:
+                self._charge_search()
+            except BudgetExhausted:
+                self._stopped = self._budget.stopped_reason if self._budget else "budget_exhausted"
+                break
             hypothesis_id = new_id("hypothesis") if business_id else ""
-            findings = tuple(self._hypothesis_search.find(hypothesis))
+            try:
+                findings = tuple(self._hypothesis_search.find(hypothesis))
+            except BudgetExhausted:
+                self._stopped = self._budget.stopped_reason if self._budget else "budget_exhausted"
+                break
             verified = verify_hypothesis(
                 hypothesis, _StaticProbe(tuple(f.hit for f in findings if f.hit is not None))
             )
@@ -384,61 +439,179 @@ class LeadGenerationEngine:
                         )
                     continue
                 hit = finding.hit
-                try:
-                    candidate, selection = _accept_hit(hit, profile)
-                except CandidateRejected as exc:
-                    rejected.append(RejectedHit(identity=hit.identity, why=str(exc)))
+                candidate, selection = _judge_hit(hit, profile, self._classifier, strict=True)
+                if candidate is None:
+                    rejected.append(RejectedHit(identity=hit.identity, why=selection.why))
                     if hypothesis_id:
                         self._warehouse.save_candidate(
                             _rejected_hit_to_candidate_record(
-                                business_id, hypothesis_id, hit, str(exc)
+                                business_id, hypothesis_id, hit, selection.why, selection.evidence_class
                             )
                         )
                     continue
-                identity_key = candidate.identity.strip().casefold()
-                if identity_key in seen_identities:
-                    if hypothesis_id:
-                        self._warehouse.save_candidate(
-                            _rejected_hit_to_candidate_record(
-                                business_id,
-                                hypothesis_id,
-                                hit,
-                                "duplicate contact already handed to the board",
-                            )
-                        )
+                if not _remember(candidate, seen_identities):
+                    self._reject_duplicate(business_id, hypothesis_id, hit, rejected)
                     continue
-                seen_identities.add(identity_key)
-                accepted.append(candidate)
-                name, phone, email = split_identity(candidate.identity)
-                person_id = (
-                    stable_person_id(business_id, phone=phone, email=email, identity=candidate.identity)
-                    if business_id
-                    else ""
+                if business_id and not self._warehouse.claim_cold_identity(business_id, candidate.identity):
+                    self._reject_duplicate(business_id, hypothesis_id, hit, rejected)
+                    continue
+                self._keep(
+                    business_id,
+                    hypothesis_id,
+                    candidate,
+                    hit,
+                    selection,
+                    ranked,
+                    segment=hypothesis.audience_segment,
                 )
-                handoff = Cycle1Handoff.from_candidate(
-                    candidate, hit.channel, person_id=person_id, hypothesis_id=hypothesis_id
-                )
-                handoffs.append(handoff)
-                if hypothesis_id:
-                    self._warehouse.save_candidate(
-                        _candidate_to_record(
-                            business_id, hypothesis_id, candidate, email=email, phone=phone, selection=selection
-                        )
-                    )
-                if business_id and (phone or email):
-                    self._lead_touch_sink.publish(
-                        business_id,
-                        assembled_touch(business_id, candidate, handoff, segment=hypothesis.audience_segment),
-                    )
 
+        accepted, handoffs = _ordered(ranked)
         status = GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT
-        return GenerationResult(
-            status=status,
-            offer=offer,
-            candidates=tuple(accepted),
-            handoffs=tuple(handoffs),
-            rejected=tuple(rejected),
+        return self._finish(
+            GenerationResult(
+                status=status,
+                offer=offer,
+                candidates=accepted,
+                handoffs=handoffs,
+                rejected=tuple(rejected),
+            ),
+            processed=len(accepted) + len(rejected),
+            qualified=len(accepted),
+            business_id=business_id,
         )
+
+    def _client_block(self, business_id: str) -> str:
+        if not business_id:
+            return ""
+        spent = self._warehouse.spend_for(business_id)
+        return client_budget_blocked(spent.llm_calls, spent.search_requests)
+
+    def _finish_if_blocked(self, business_id: str, offer: OfferUnderstanding) -> GenerationResult | None:
+        reason = self._client_block(business_id)
+        if not reason:
+            return None
+        self._stopped = reason
+        return self._finish(
+            GenerationResult(
+                status=GenerationStatus.NO_FIT,
+                offer=offer,
+                candidates=(),
+                handoffs=(),
+                rejected=(),
+            ),
+            processed=0,
+            qualified=0,
+            business_id=business_id,
+        )
+
+    def _charge_search(self) -> None:
+        if self._budget is not None:
+            self._budget.charge_search("discovery")
+
+    def _stopped_result(self, offer: OfferUnderstanding | None, business_id: str) -> GenerationResult:
+        self._stopped = self._budget.stopped_reason if self._budget else "budget_exhausted"
+        return self._finish(
+            GenerationResult(
+                status=GenerationStatus.NO_FIT,
+                offer=offer,
+                candidates=(),
+                handoffs=(),
+                rejected=(),
+            ),
+            processed=0,
+            qualified=0,
+            business_id=business_id,
+        )
+
+    def _reject_duplicate(
+        self, business_id: str, hypothesis_id: str, hit: PeopleHit, rejected: list[RejectedHit]
+    ) -> None:
+        why = "duplicate contact already handed to the board"
+        rejected.append(RejectedHit(identity=hit.identity, why=why))
+        if hypothesis_id:
+            self._warehouse.save_candidate(
+                _rejected_hit_to_candidate_record(business_id, hypothesis_id, hit, why, "")
+            )
+
+    def _keep(
+        self,
+        business_id: str,
+        hypothesis_id: str,
+        candidate: Candidate,
+        hit: PeopleHit,
+        selection: Selection,
+        ranked: list[tuple[float, Candidate, Cycle1Handoff]],
+        *,
+        segment: str | None,
+    ) -> None:
+        name, phone, email = split_identity(candidate.identity)
+        person_id = (
+            stable_person_id(business_id, phone=phone, email=email, identity=candidate.identity)
+            if business_id
+            else ""
+        )
+        handoff = Cycle1Handoff.from_candidate(
+            candidate, hit.channel, person_id=person_id, hypothesis_id=hypothesis_id
+        )
+        if hypothesis_id:
+            self._warehouse.save_candidate(
+                _candidate_to_record(
+                    business_id,
+                    hypothesis_id,
+                    candidate,
+                    email=email,
+                    phone=phone,
+                    selection=selection,
+                )
+            )
+        if business_id and (phone or email):
+            self._lead_touch_sink.publish(
+                business_id,
+                assembled_touch(business_id, candidate, handoff, segment=segment),
+            )
+        ranked.append(
+            (
+                rank_score(
+                    evidence_class=selection.evidence_class,
+                    fit=selection.fit,
+                    evidence=selection.evidence,
+                ),
+                candidate,
+                handoff,
+            )
+        )
+
+    def _finish(
+        self,
+        result: GenerationResult,
+        *,
+        processed: int,
+        qualified: int,
+        business_id: str,
+    ) -> GenerationResult:
+        report = None
+        if self._budget is not None:
+            report = self._budget.report(processed=processed, qualified=qualified)
+            if business_id:
+                delta = SpendRecord(
+                    business_id=business_id,
+                    llm_calls=self._budget.llm_calls - self._accounted.llm_calls,
+                    search_requests=self._budget.search_requests - self._accounted.search_requests,
+                    input_tokens=self._budget.input_tokens - self._accounted.input_tokens,
+                    output_tokens=self._budget.output_tokens - self._accounted.output_tokens,
+                    unknown_price=self._budget.unknown_price,
+                )
+                self._accounted = SpendRecord(
+                    business_id=business_id,
+                    llm_calls=self._budget.llm_calls,
+                    search_requests=self._budget.search_requests,
+                    input_tokens=self._budget.input_tokens,
+                    output_tokens=self._budget.output_tokens,
+                    unknown_price=self._budget.unknown_price,
+                )
+                if delta.llm_calls or delta.search_requests or delta.input_tokens or delta.output_tokens:
+                    self._warehouse.add_spend(delta)
+        return replace(result, cost=report, stopped_reason=self._stopped)
 
 
 class _StaticProbe:
@@ -536,26 +709,95 @@ def _finding_to_rejected_trace_record(
     )
 
 
-def _accept_hit(hit: PeopleHit, profile: SelectionProfile) -> tuple[Candidate, Selection]:
-    """Candidate floor (identity + reason + source), then fit / evidence / addressable."""
+def _judge_hit(
+    hit: PeopleHit, profile: SelectionProfile, classifier, *, strict: bool = False
+) -> tuple[Candidate | None, Selection]:
+    """Candidate floor, then fit / evidence / addressable.
 
-    candidate = accept_candidate(
-        identity=hit.identity, reason=hit.observed_fact, reason_source=hit.observed_source
-    )
+    `strict` is the live hypothesis path: a person matched only by a keyword
+    or an audience label is not purchase intent and does not reach Cold.
+    The older bridge path leaves that gate off so owner-deposited facts that
+    the existing tests lock in still pass.
+    """
+
+    try:
+        candidate = accept_candidate(
+            identity=hit.identity, reason=hit.observed_fact, reason_source=hit.observed_source
+        )
+    except CandidateRejected as exc:
+        return None, Selection(0.0, 0.0, False, False, str(exc), INSUFFICIENT_EVIDENCE)
     _, phone, email = split_identity(candidate.identity)
     selection = select(
         candidate.reason, profile, addressable=bool(phone or email), source_kind=hit.source_kind
     )
+    if classifier is not None and selection.evidence_class == INFERRED_OPPORTUNITY:
+        confirmed = confirm_inferred(
+            candidate.reason,
+            qualify(
+                candidate.reason,
+                profile,
+                addressable=bool(phone or email),
+                source_kind=hit.source_kind,
+                source_url=hit.observed_source,
+            ),
+            classifier,
+        )
+        selection = Selection(
+            confirmed.fit,
+            confirmed.evidence,
+            bool(phone or email),
+            confirmed.accepted,
+            confirmed.why,
+            confirmed.evidence_class,
+        )
+    if (
+        strict
+        and hit.source_kind != SOURCE_KIND_BUSINESS
+        and selection.evidence_class in (ICP_MATCH, INSUFFICIENT_EVIDENCE)
+    ):
+        selection = Selection(
+            selection.fit,
+            selection.evidence,
+            selection.addressable,
+            False,
+            KEYWORD_ONLY,
+            selection.evidence_class,
+        )
     if not selection.accepted:
-        raise CandidateRejected(selection.why)
+        return None, selection
     return candidate, selection
 
 
-def _not_seen_before(candidate: Candidate, seen: set[str]) -> None:
+def _remember(candidate: Candidate, seen: set[str]) -> bool:
     key = candidate.identity.strip().casefold()
     if key in seen:
-        raise CandidateRejected("duplicate contact already handed to the board")
+        return False
     seen.add(key)
+    return True
+
+
+def _ordered(
+    ranked: list[tuple[float, Candidate, Cycle1Handoff]],
+) -> tuple[tuple[Candidate, ...], tuple[Cycle1Handoff, ...]]:
+    ranked.sort(key=lambda item: item[0], reverse=True)
+    return tuple(item[1] for item in ranked), tuple(item[2] for item in ranked)
+
+
+def _pattern_paused(warehouse: AnalysisWarehouse, business_id: str, hypothesis: Hypothesis) -> bool:
+    """Skip a query the last stored row for this exact template already paused or zeroed."""
+
+    if not business_id:
+        return False
+    matches = [
+        row
+        for row in warehouse.list_hypotheses(business_id)
+        if row.intent_trigger == hypothesis.intent_trigger.kind
+        and row.query_template == hypothesis.query_template
+    ]
+    if not matches:
+        return False
+    latest = max(matches, key=lambda row: row.created_at)
+    return latest.status == "paused" or latest.query_budget <= 0
 
 
 def _hit_to_trace_record(business_id: str, hypothesis_id: str, hit: PeopleHit) -> TraceRecord:
@@ -595,11 +837,12 @@ def _candidate_to_record(
         decided_at=datetime.now(timezone.utc),
         email=email or "",
         phone=phone or "",
+        evidence_class=selection.evidence_class if selection else "",
     )
 
 
 def _rejected_hit_to_candidate_record(
-    business_id: str, hypothesis_id: str, hit: PeopleHit, why: str
+    business_id: str, hypothesis_id: str, hit: PeopleHit, why: str, evidence_class: str = ""
 ) -> CandidateRecord:
     return CandidateRecord(
         id=new_id("candidate"),
@@ -614,4 +857,5 @@ def _rejected_hit_to_candidate_record(
         addressable=False,
         decision="rejected",
         decided_at=datetime.now(timezone.utc),
+        evidence_class=evidence_class,
     )

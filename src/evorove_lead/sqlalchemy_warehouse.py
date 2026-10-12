@@ -7,9 +7,10 @@ not on this module. Keep the ORM here so the ports stay swappable.
 from __future__ import annotations
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import create_engine, func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 
 from evorove_lead.crm_touch import (
@@ -23,8 +24,10 @@ from evorove_lead.sqlalchemy_models import (
     Base,
     BriefRow,
     CandidateRow,
+    ColdIdentityClaimRow,
     CrmDeliveryRow,
     HypothesisOutcomeRow,
+    PipelineSpendRow,
     HypothesisRow,
     RejectedTraceRow,
     TraceRow,
@@ -37,6 +40,7 @@ from evorove_lead.warehouse import (
     HypothesisRecord,
     NullAnalysisWarehouse,
     RejectedTraceRecord,
+    SpendRecord,
     TraceRecord,
     new_id,
 )
@@ -192,6 +196,7 @@ def _candidate_to_row(record: CandidateRecord) -> CandidateRow:
         addressable=record.addressable,
         decision=record.decision,
         decided_at=record.decided_at,
+        evidence_class=record.evidence_class or "",
     )
 
 
@@ -212,6 +217,7 @@ def _candidate_from_row(row: CandidateRow) -> CandidateRecord:
         trace_id=row.trace_id or "",
         email=row.email or "",
         phone=row.phone or "",
+        evidence_class=row.evidence_class or "",
     )
 
 
@@ -334,6 +340,63 @@ class SqlAlchemyAnalysisWarehouse:
     def save_hypothesis_outcome(self, record: HypothesisOutcomeRecord) -> None:
         with self._session_factory() as session:
             session.merge(_outcome_to_row(record))
+            session.commit()
+
+    def claim_cold_identity(self, business_id: str, identity: str) -> bool:
+        key = (identity or "").strip().casefold()
+        if not business_id or not key:
+            return False
+        if len(key) > 320:
+            key = key[:320]
+        with self._session_factory() as session:
+            try:
+                session.add(
+                    ColdIdentityClaimRow(
+                        business_id=business_id,
+                        identity_key=key,
+                        claimed_at=datetime.now(timezone.utc),
+                    )
+                )
+                session.commit()
+            except IntegrityError:
+                session.rollback()
+                return False
+        return True
+
+    def spend_for(self, business_id: str) -> SpendRecord:
+        with self._session_factory() as session:
+            row = session.get(PipelineSpendRow, business_id)
+            if row is None:
+                return SpendRecord(business_id=business_id)
+            return SpendRecord(
+                business_id=business_id,
+                llm_calls=row.llm_calls or 0,
+                search_requests=row.search_requests or 0,
+                input_tokens=row.input_tokens or 0,
+                output_tokens=row.output_tokens or 0,
+                unknown_price=bool(row.unknown_price),
+            )
+
+    def add_spend(self, record: SpendRecord) -> None:
+        with self._session_factory() as session:
+            row = session.get(PipelineSpendRow, record.business_id)
+            if row is None:
+                session.add(
+                    PipelineSpendRow(
+                        business_id=record.business_id,
+                        llm_calls=record.llm_calls,
+                        search_requests=record.search_requests,
+                        input_tokens=record.input_tokens,
+                        output_tokens=record.output_tokens,
+                        unknown_price=record.unknown_price,
+                    )
+                )
+            else:
+                row.llm_calls = (row.llm_calls or 0) + record.llm_calls
+                row.search_requests = (row.search_requests or 0) + record.search_requests
+                row.input_tokens = (row.input_tokens or 0) + record.input_tokens
+                row.output_tokens = (row.output_tokens or 0) + record.output_tokens
+                row.unknown_price = bool(row.unknown_price or record.unknown_price)
             session.commit()
 
     def list_hypothesis_outcomes(self, business_id: str, hypothesis_id: str):

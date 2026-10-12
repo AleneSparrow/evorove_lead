@@ -24,7 +24,12 @@ def test_renders_real_javascript_generated_content(tmp_path):
         encoding="utf-8",
     )
 
-    html = render_page_html(page_file.as_uri())
+    try:
+        html = render_page_html(page_file.as_uri())
+    except RenderRejected as exc:
+        if "Executable doesn't exist" in str(exc):
+            pytest.skip("Chromium is not installed in this environment")
+        raise
 
     assert "Rendered by JS" in html
     assert "This text only exists after script runs." in html

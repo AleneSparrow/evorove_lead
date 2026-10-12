@@ -22,6 +22,7 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 
+from evorove_lead.cost_control import maybe_meter
 from evorove_lead.hypothesis import (
     GeoRadius,
     Hypothesis,
@@ -125,6 +126,7 @@ class AnthropicMarketingCompletion:
     def __init__(self, api_key: str, model: str) -> None:
         self._api_key = api_key
         self._model = model
+        self.last_usage: dict[str, int] = {}
 
     def __repr__(self) -> str:
         return f"AnthropicMarketingCompletion(model={self._model!r})"
@@ -160,6 +162,11 @@ class AnthropicMarketingCompletion:
             for block in body.get("content", [])
             if isinstance(block, dict) and block.get("type") == "text"
         ]
+        usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        self.last_usage = {
+            "input_tokens": int(usage.get("input_tokens") or 0),
+            "output_tokens": int(usage.get("output_tokens") or 0),
+        }
         return "".join(parts)
 
 
@@ -193,7 +200,10 @@ def marketing_analyzer_from_env() -> MarketingAnalyzer | None:
         raise RuntimeError(
             "ANTHROPIC_API_KEY and ANTHROPIC_MODEL are required when AI_PROVIDER=anthropic"
         )
-    return MarketingAnalyzer(AnthropicMarketingCompletion(api_key=api_key, model=model))
+    completion = maybe_meter(
+        AnthropicMarketingCompletion(api_key=api_key, model=model), "deep_reasoning"
+    )
+    return MarketingAnalyzer(completion)
 
 
 def accept_marketing_analysis(

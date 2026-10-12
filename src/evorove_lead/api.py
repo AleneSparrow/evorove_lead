@@ -17,6 +17,7 @@ in this repository; run it with `uvicorn evorove_lead.api:app`.
 from __future__ import annotations
 
 import hmac
+import json
 import os
 from datetime import datetime, timezone
 from typing import Annotated, Callable, Literal
@@ -34,6 +35,7 @@ from evorove_lead.searches import (
     live_engine,
     run_due,
     run_due_market_signals,
+    run_is_active,
     run_target,
     search_targets_from_env,
 )
@@ -77,7 +79,18 @@ def _target_view(target: SearchTarget) -> dict[str, object]:
         "status": target.last_status,
         "last_run_at": target.last_run_at.isoformat() if target.last_run_at else None,
         "cold": target.last_cold,
+        "cost": _cost_view(target.last_cost),
     }
+
+
+def _cost_view(raw: str) -> dict | None:
+    if not (raw or "").strip():
+        return None
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
 
 
 def create_app(
@@ -129,7 +142,7 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         engine = _engine_or_503()
         existing = search_targets.get(body.business_id)
-        if existing is not None and existing.last_status == "running":
+        if existing is not None and run_is_active(existing, datetime.now(timezone.utc)):
             return _target_view(existing)
         target = SearchTarget(
             business_id=body.business_id,
@@ -169,8 +182,15 @@ def create_app(
         """Track 4's own daily cron entry point -- see run_due_market_signals."""
 
         _require_task_secret(x_internal_task_secret)
-        client, llm = _market_signal_deps_or_503()
-        return run_due_market_signals(search_targets, signals, client, llm, _engine_or_503())
+        from evorove_lead.cost_control import RunLedger, install_ledger, reset_ledger
+
+        ledger = RunLedger.from_env(client_id="market-signals")
+        token = install_ledger(ledger)
+        try:
+            client, llm = _market_signal_deps_or_503()
+            return run_due_market_signals(search_targets, signals, client, llm, _engine_or_503())
+        finally:
+            reset_ledger(token)
 
     @app.get("/api/v1/internal/crm-deliveries/status")
     def crm_delivery_status(

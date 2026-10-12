@@ -12,6 +12,13 @@ no industry lists, no invented synonyms. A trace is kept only when
 
 and it is not a competitor: a business advertising the client's own service
 is rejected, as is a neighbouring niche that shares none of these words.
+
+`evidence_class` names the decision. EXPLICIT_INTENT is only a public ask
+or a broken-need sentence that also shares a service word. An audience
+mention is ICP_MATCH. A service word with no ask is INSUFFICIENT_EVIDENCE.
+The live hypothesis path does not put those last two on Cold for a person.
+The older bridge path still can, because existing deposited-fact tests lock
+that in; the class label still does not call them purchase intent.
 """
 
 from __future__ import annotations
@@ -30,6 +37,16 @@ NOT_TIED = "reason is not tied to the offer"
 COMPETITOR = "competitor advertising the same service"
 NO_EVIDENCE = "no open need or audience fact in the reason"
 NOT_ADDRESSABLE = "nobody to address"
+KEYWORD_ONLY = "keyword overlap is not a verified need"
+
+# A person who asks, or describes something broken, in the words of the service.
+EXPLICIT_INTENT = "EXPLICIT_INTENT"
+# A person who asks, matched to the audience the brief names, without the service word.
+INFERRED_OPPORTUNITY = "INFERRED_OPPORTUNITY"
+# The audience is present. For a company page that is a fit. Not purchase intent.
+ICP_MATCH = "ICP_MATCH"
+INSUFFICIENT_EVIDENCE = "INSUFFICIENT_EVIDENCE"
+IRRELEVANT = "IRRELEVANT"
 
 _WORD_RE = re.compile(r"[a-z][a-z']{2,}")
 _STOPWORDS = frozenset(
@@ -132,6 +149,7 @@ class Selection:
     addressable: bool
     accepted: bool
     why: str = ""
+    evidence_class: str = ""
 
 
 def select(
@@ -145,21 +163,34 @@ def select(
 
     if source_kind == SOURCE_KIND_BUSINESS:
         # A company page: it must be the kind of business the client serves,
-        # and it must not be selling the client's own service.
+        # and it must not be selling the client's own service. That fit is
+        # ICP_MATCH — the company is the audience — not a purchase ask.
         if service_hits and (offering or not audience_hits):
-            return Selection(0.0, 0.0, addressable, False, COMPETITOR)
+            return Selection(0.0, 0.0, addressable, False, COMPETITOR, IRRELEVANT)
         fit = 1.0 if audience_hits else 0.0
         evidence = 1.0 if audience_hits else 0.0
+        kind = ICP_MATCH if audience_hits else IRRELEVANT
     else:
         if service_hits and offering and not need:
-            return Selection(0.0, 0.0, addressable, False, COMPETITOR)
+            return Selection(0.0, 0.0, addressable, False, COMPETITOR, IRRELEVANT)
         fit = 1.0 if (service_hits or audience_hits) else 0.0
-        evidence = 1.0 if (need and service_hits) or audience_hits else (0.5 if service_hits else 0.0)
+        # Need language plus a service word is the only verified purchase intent.
+        # An audience word alone is ICP_MATCH. A service word alone is not evidence.
+        if need and service_hits:
+            evidence, kind = 1.0, EXPLICIT_INTENT
+        elif need and audience_hits:
+            evidence, kind = 1.0, INFERRED_OPPORTUNITY
+        elif audience_hits:
+            evidence, kind = 0.5, ICP_MATCH
+        elif service_hits:
+            evidence, kind = 0.5, INSUFFICIENT_EVIDENCE
+        else:
+            evidence, kind = 0.0, IRRELEVANT
 
     if fit == 0.0:
-        return Selection(fit, evidence, addressable, False, NOT_TIED)
+        return Selection(fit, evidence, addressable, False, NOT_TIED, IRRELEVANT)
     if evidence == 0.0:
-        return Selection(fit, evidence, addressable, False, NO_EVIDENCE)
+        return Selection(fit, evidence, addressable, False, NO_EVIDENCE, kind)
     if not addressable:
-        return Selection(fit, evidence, addressable, False, NOT_ADDRESSABLE)
-    return Selection(fit, evidence, addressable, True)
+        return Selection(fit, evidence, addressable, False, NOT_ADDRESSABLE, kind)
+    return Selection(fit, evidence, addressable, True, "", kind)

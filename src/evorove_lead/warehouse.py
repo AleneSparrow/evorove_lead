@@ -102,6 +102,19 @@ class CandidateRecord:
     trace_id: str = ""
     email: str = ""
     phone: str = ""
+    evidence_class: str = ""
+
+
+@dataclass(frozen=True)
+class SpendRecord:
+    """Cumulative measured usage for one business. Dollars stay on the run report."""
+
+    business_id: str
+    llm_calls: int = 0
+    search_requests: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    unknown_price: bool = False
 
 
 @dataclass(frozen=True)
@@ -148,6 +161,14 @@ class AnalysisWarehouse(Protocol):
     def list_hypothesis_outcomes(
         self, business_id: str, hypothesis_id: str
     ) -> Sequence[HypothesisOutcomeRecord]: ...
+
+    def claim_cold_identity(self, business_id: str, identity: str) -> bool:
+        """True the first time this contact is claimed for Cold on this tenant."""
+        ...
+
+    def spend_for(self, business_id: str) -> SpendRecord: ...
+
+    def add_spend(self, record: SpendRecord) -> None: ...
 
 
 class NullAnalysisWarehouse:
@@ -196,6 +217,16 @@ class NullAnalysisWarehouse:
     ) -> Sequence[HypothesisOutcomeRecord]:
         return ()
 
+    def claim_cold_identity(self, business_id: str, identity: str) -> bool:
+        del business_id, identity
+        return True
+
+    def spend_for(self, business_id: str) -> SpendRecord:
+        return SpendRecord(business_id=business_id)
+
+    def add_spend(self, record: SpendRecord) -> None:
+        return None
+
 
 def _upsert(records: list, record) -> None:
     """Replace the row with the same `.id`, or append. Mirrors `session.merge`."""
@@ -217,6 +248,8 @@ class RecordingAnalysisWarehouse:
         self.rejected_traces: list[RejectedTraceRecord] = []
         self.candidates: list[CandidateRecord] = []
         self.hypothesis_outcomes: list[HypothesisOutcomeRecord] = []
+        self._claims: set[tuple[str, str]] = set()
+        self.spend: dict[str, SpendRecord] = {}
 
     def save_brief(self, record: BriefRecord) -> None:
         _upsert(self.briefs, record)
@@ -271,4 +304,25 @@ class RecordingAnalysisWarehouse:
             r
             for r in self.hypothesis_outcomes
             if r.business_id == business_id and r.hypothesis_id == hypothesis_id
+        )
+
+    def claim_cold_identity(self, business_id: str, identity: str) -> bool:
+        key = (business_id, identity.strip().casefold())
+        if not key[0] or not key[1] or key in self._claims:
+            return False
+        self._claims.add(key)
+        return True
+
+    def spend_for(self, business_id: str) -> SpendRecord:
+        return self.spend.get(business_id, SpendRecord(business_id=business_id))
+
+    def add_spend(self, record: SpendRecord) -> None:
+        current = self.spend_for(record.business_id)
+        self.spend[record.business_id] = SpendRecord(
+            business_id=record.business_id,
+            llm_calls=current.llm_calls + record.llm_calls,
+            search_requests=current.search_requests + record.search_requests,
+            input_tokens=current.input_tokens + record.input_tokens,
+            output_tokens=current.output_tokens + record.output_tokens,
+            unknown_price=current.unknown_price or record.unknown_price,
         )

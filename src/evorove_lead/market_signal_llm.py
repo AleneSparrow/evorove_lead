@@ -22,6 +22,8 @@ import urllib.request
 from dataclasses import dataclass
 from typing import Protocol
 
+from evorove_lead.cost_control import maybe_meter
+
 _MAX_QUOTE_CHARS = 800
 _MAX_LABEL_CHARS = 255
 SIGNAL_CHANNELS = ("forums", "industry_sites", "news", "business_listing")
@@ -77,6 +79,7 @@ class AnthropicMarketSignalCompletion:
     def __init__(self, api_key: str, model: str) -> None:
         self._api_key = api_key
         self._model = model
+        self.last_usage: dict[str, int] = {}
 
     def __repr__(self) -> str:
         return f"AnthropicMarketSignalCompletion(model={self._model!r})"
@@ -110,6 +113,11 @@ class AnthropicMarketSignalCompletion:
             for block in body.get("content", [])
             if isinstance(block, dict) and block.get("type") == "text"
         ]
+        usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        self.last_usage = {
+            "input_tokens": int(usage.get("input_tokens") or 0),
+            "output_tokens": int(usage.get("output_tokens") or 0),
+        }
         return "".join(parts)
 
 
@@ -131,7 +139,9 @@ def market_signal_completion_from_env() -> MarketSignalCompletion | None:
         raise RuntimeError(
             "ANTHROPIC_API_KEY and ANTHROPIC_MODEL are required when AI_PROVIDER=anthropic"
         )
-    return AnthropicMarketSignalCompletion(api_key=api_key, model=model)
+    return maybe_meter(
+        AnthropicMarketSignalCompletion(api_key=api_key, model=model), "low_cost_classification"
+    )
 
 
 @dataclass(frozen=True)

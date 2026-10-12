@@ -75,17 +75,30 @@ def client_zero_seed() -> BusinessSeed:
 def search_summary(result) -> dict[str, int | str]:
     """Counts the owner can read. Never a contact."""
 
+    cost = result.cost or {}
+    usd = cost.get("cost_usd")
     return {
         "status": result.status.value,
         "candidates": len(result.candidates),
         "handoffs": len(result.handoffs),
         "rejected": len(result.rejected),
         "messages_sent": 0,
+        "llm_calls": int(cost.get("llm_calls") or 0),
+        "search_requests": int(cost.get("search_requests") or 0),
+        "cost_usd": "unknown" if cost.get("unknown_price") else ("not_measured" if usd is None else f"{usd:.6f}"),
     }
 
 
 def run_client_zero_search() -> dict[str, int | str]:
-    search = hypothesis_search_from_env()
+    from evorove_lead.cost_control import RunLedger, install_ledger, reset_ledger
+
+    ledger = RunLedger.from_env(client_id="client-zero")
+    token = install_ledger(ledger)
+    try:
+        search = hypothesis_search_from_env()
+        analyzer = marketing_analyzer_from_env() if search is not None else None
+    finally:
+        reset_ledger(token)
     if search is None:
         summary: dict[str, int | str] = {
             "status": "search_unconnected",
@@ -98,7 +111,8 @@ def run_client_zero_search() -> dict[str, int | str]:
         engine = LeadGenerationEngine(
             presence=client_zero_presence(),
             hypothesis_search=search,
-            marketing_analyzer=marketing_analyzer_from_env(),
+            marketing_analyzer=analyzer,
+            run_budget=ledger,
             # Client 0 is a nationwide US SaaS product, not a local service
             # business with one city or service area -- there is no real
             # locality to infer here, only this product's own jargon
