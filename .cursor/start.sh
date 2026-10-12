@@ -20,7 +20,8 @@ sudo -u postgres psql -v ON_ERROR_STOP=1 -tc "SELECT 1 FROM pg_database WHERE da
 export DATABASE_URL="postgresql+psycopg://evorove_lead:local_development_only@127.0.0.1:5432/evorove_lead"
 alembic upgrade head
 
-if curl -sf "http://127.0.0.1:8002/health" >/dev/null; then
+# 200 is this branch's /health. 404 means uvicorn is up on main, which has no /health yet.
+if [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:8002/health" || true)" =~ ^(200|404)$ ]]; then
   exit 0
 fi
 
@@ -34,7 +35,9 @@ if ! "${TMUX[@]}" has-session -t evorove_lead_api 2>/dev/null; then
 fi
 
 for _ in $(seq 1 30); do
-  curl -sf "http://127.0.0.1:8002/health" && exit 0
+  if [[ "$(curl -s -o /dev/null -w '%{http_code}' --max-time 2 "http://127.0.0.1:8002/health" || true)" =~ ^(200|404)$ ]]; then
+    exit 0
+  fi
   sleep 1
 done
 echo "evorove_lead api did not become ready" >&2
