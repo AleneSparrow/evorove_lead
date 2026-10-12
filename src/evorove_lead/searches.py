@@ -9,6 +9,7 @@ person.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 from dataclasses import dataclass, replace
@@ -19,6 +20,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session, sessionmaker
 
 from evorove_lead.business import BusinessSeed
+from evorove_lead.cost_control import RunLedger, install_ledger, reset_ledger
 from evorove_lead.decision_maker_llm import decision_maker_completion_from_env
 from evorove_lead.engine import GenerationStatus, LeadGenerationEngine
 from evorove_lead.hypothesis import GeoRadius
@@ -32,6 +34,7 @@ from evorove_lead.web_search import WebSearchClient, client_from_env
 
 LOGGER = logging.getLogger(__name__)
 RERUN_AFTER = timedelta(hours=20)  # a daily cron always finds yesterday's targets due
+STALE_RUNNING = timedelta(hours=2)  # a crashed run must not stay "running" forever
 
 
 @dataclass(frozen=True)
@@ -43,6 +46,7 @@ class SearchTarget:
     last_run_at: datetime | None = None
     last_status: str = "queued"  # queued | running | people_found | no_fit | ... | failed
     last_cold: int = 0
+    last_cost: str = ""
 
 
 class SearchTargetStore(Protocol):
@@ -106,6 +110,7 @@ def _from_row(row: SearchTargetRow) -> SearchTarget:
         last_run_at=_aware(row.last_run_at) if row.last_run_at else None,
         last_status=row.last_status,
         last_cold=row.last_cold or 0,
+        last_cost=getattr(row, "last_cost", "") or "",
     )
 
 
@@ -113,8 +118,18 @@ def _aware(value: datetime) -> datetime:
     return value if value.tzinfo else value.replace(tzinfo=timezone.utc)  # SQLite drops tzinfo
 
 
+def run_is_active(target: SearchTarget, now: datetime) -> bool:
+    """True only while a run started recently. A stale "running" row is recoverable."""
+
+    if target.last_status != "running" or target.last_run_at is None:
+        return False
+    return now - target.last_run_at < STALE_RUNNING
+
+
 def _is_due(target: SearchTarget, now: datetime) -> bool:
-    return target.last_status != "running" and (target.last_run_at is None or now - target.last_run_at >= RERUN_AFTER)
+    if target.last_status == "running":
+        return not run_is_active(target, now)
+    return target.last_run_at is None or now - target.last_run_at >= RERUN_AFTER
 
 
 def search_targets_from_env() -> SearchTargetStore:
@@ -133,13 +148,19 @@ def live_engine() -> LeadGenerationEngine | None:
     client = client_from_env()
     if client is None:
         return None
+    ledger = RunLedger.from_env()
+    token = install_ledger(ledger)
+    try:
+        decision_maker = decision_maker_completion_from_env()
+        analyzer = marketing_analyzer_from_env()
+    finally:
+        reset_ledger(token)
     return LeadGenerationEngine(
         presence=HttpPresenceSource(),
-        hypothesis_search=WebSearchPeopleSearch(
-            client, decision_maker_llm=decision_maker_completion_from_env()
-        ),
+        hypothesis_search=WebSearchPeopleSearch(client, decision_maker_llm=decision_maker),
         infer_geo_radius_from_brief=True,
-        marketing_analyzer=marketing_analyzer_from_env(),
+        marketing_analyzer=analyzer,
+        run_budget=ledger,
     )
 
 
@@ -147,15 +168,21 @@ def run_target(store: SearchTargetStore, engine: LeadGenerationEngine, target: S
     """One run for one business. Never raises: the outcome is the stored status."""
 
     now = datetime.now(timezone.utc)
-    store.save(replace(target, last_status="running"))
+    store.save(replace(target, last_status="running", last_run_at=now))
     try:
         result = engine.generate(
             BusinessSeed(site_url=target.site_url, business_id=target.business_id, business_archetype=target.business_archetype)
         )
-        done = replace(target, last_run_at=now, last_status=result.status.value, last_cold=len(result.handoffs))
+        done = replace(
+            target,
+            last_run_at=now,
+            last_status=result.status.value,
+            last_cold=len(result.handoffs),
+            last_cost=json.dumps(result.cost) if result.cost else "",
+        )
     except Exception:  # noqa: BLE001 -- recorded; the next cron run tries again
         LOGGER.exception("search_run_failed business_id=%s", target.business_id)
-        done = replace(target, last_run_at=now, last_status="failed", last_cold=0)
+        done = replace(target, last_run_at=now, last_status="failed", last_cold=0, last_cost="")
     store.save(done)
     return done
 

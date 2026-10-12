@@ -24,6 +24,7 @@ from evorove_lead.decision_maker_llm import (
 from evorove_lead.platforms import PLATFORM_DOMAINS, is_platform, registrable_domain
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
 from evorove_lead.search import PeopleHit, TraceFinding
+from evorove_lead.trace_screen import screen_snippet
 from evorove_lead.web_search import SearchHit, WebSearchClient, client_from_env, fetch_page_text
 
 if TYPE_CHECKING:
@@ -89,6 +90,15 @@ def _keywords(query_template: str) -> tuple[str, ...]:
     return tuple(words - _STOPWORDS)
 
 
+def _screen(hypothesis: "Hypothesis", search_hit: SearchHit) -> tuple[str, str, str]:
+    locality = getattr(getattr(hypothesis, "geo_radius", None), "locality", "") or ""
+    return screen_snippet(
+        search_hit.snippet,
+        locality=locality,
+        published_at=getattr(search_hit, "published_at", None),
+    )
+
+
 def _on_topic(hypothesis: "Hypothesis", snippet: str) -> bool:
     """Heuristic topic check: does anything from the query show up in the result?
 
@@ -134,18 +144,38 @@ class WebSearchPeopleSearch:
     ) -> None:
         self._client = client
         self._page_fetcher = page_fetcher
+        self._page_cache: dict[str, str] = {}
         # None keeps module 3's regex-only heuristic. A set completion adds
         # the LLM read as a fallback for a page the heuristic can't parse.
         self._decision_maker_llm = decision_maker_llm
         self.connected = True
 
+    def _cached_fetch(self, url: str) -> str:
+        cached = self._page_cache.get(url)
+        if cached is not None:
+            return cached
+        text = self._page_fetcher(url)
+        self._page_cache[url] = text
+        return text
+
     def find(self, hypothesis: "Hypothesis") -> Sequence[TraceFinding]:
         if hypothesis.intent_trigger.kind == "business_listing":
             return self._find_companies(hypothesis)
-        return tuple(
-            self._finding_for(hypothesis, search_hit)
-            for search_hit in self._client.search(hypothesis.query_template)
-        )
+        findings: list[TraceFinding] = []
+        seen_urls: set[str] = set()
+        for search_hit in self._client.search(hypothesis.query_template):
+            if search_hit.url in seen_urls:
+                findings.append(
+                    self._screened(
+                        hypothesis,
+                        search_hit,
+                        reject_reason="duplicate url in this query",
+                    )
+                )
+                continue
+            seen_urls.add(search_hit.url)
+            findings.append(self._finding_for(hypothesis, search_hit))
+        return tuple(findings)
 
     def _find_companies(self, hypothesis: "Hypothesis") -> tuple[TraceFinding, ...]:
         """Module 2's list-then-contact split, one `TraceFinding` per raw hit.
@@ -161,13 +191,24 @@ class WebSearchPeopleSearch:
 
         findings: list[TraceFinding] = []
         seen_domains: set[str] = set()
+        seen_urls: set[str] = set()
         for hit in self._client.search(hypothesis.query_template):
+            language, geo_hint, screen_reason = _screen(hypothesis, hit)
             base = dict(
                 url=hit.url,
                 raw_text=hit.snippet,
                 query_used=hypothesis.query_template,
                 source_channel=hypothesis.channel,
+                language=language,
+                geo_hint=geo_hint,
             )
+            if hit.url in seen_urls:
+                findings.append(TraceFinding(**base, reject_reason="duplicate url in this query"))
+                continue
+            seen_urls.add(hit.url)
+            if screen_reason:
+                findings.append(TraceFinding(**base, reject_reason=screen_reason))
+                continue
             try:
                 validated = validate_public_http_url(hit.url)
             except PresenceRejected as exc:
@@ -191,13 +232,33 @@ class WebSearchPeopleSearch:
             findings.append(self._finding_for_company(hypothesis, company))
         return tuple(findings)
 
+    def _screened(
+        self, hypothesis: "Hypothesis", search_hit: SearchHit, *, reject_reason: str
+    ) -> TraceFinding:
+        language, geo_hint, _screen_reason = _screen(hypothesis, search_hit)
+        return TraceFinding(
+            url=search_hit.url,
+            raw_text=search_hit.snippet,
+            query_used=hypothesis.query_template,
+            source_channel=hypothesis.channel,
+            language=language,
+            geo_hint=geo_hint,
+            reject_reason=reject_reason,
+        )
+
     def _finding_for(self, hypothesis: "Hypothesis", search_hit: SearchHit) -> TraceFinding:
+        language, geo_hint, screen_reason = _screen(hypothesis, search_hit)
         base = dict(
             url=search_hit.url,
             raw_text=search_hit.snippet,
             query_used=hypothesis.query_template,
             source_channel=hypothesis.channel,
+            language=language,
+            geo_hint=geo_hint,
         )
+
+        if screen_reason:
+            return TraceFinding(**base, reject_reason=screen_reason)
 
         if not _on_topic(hypothesis, search_hit.snippet):
             return TraceFinding(**base, reject_reason="trace is not about this hypothesis")
@@ -208,7 +269,7 @@ class WebSearchPeopleSearch:
             return TraceFinding(**base, reject_reason=str(exc))
 
         try:
-            page_text = self._page_fetcher(search_hit.url)
+            page_text = self._cached_fetch(search_hit.url)
         except PresenceRejected as exc:
             return TraceFinding(**base, reject_reason=str(exc))
 
@@ -240,7 +301,7 @@ class WebSearchPeopleSearch:
         if not _on_topic(hypothesis, company.snippet):
             return TraceFinding(**base, reject_reason="trace is not about this hypothesis")
 
-        pages = fetch_candidate_pages(company.url, self._page_fetcher)
+        pages = fetch_candidate_pages(company.url, self._cached_fetch)
         decision_maker = heuristic_decision_maker(pages, company.registrable_domain)
         if decision_maker is None and self._decision_maker_llm is not None:
             decision_maker = find_decision_maker_llm(pages, company.registrable_domain, self._decision_maker_llm)
@@ -267,7 +328,7 @@ class WebSearchPeopleSearch:
             page_text = homepage_text
         else:
             try:
-                page_text = self._page_fetcher(company.url)
+                page_text = self._cached_fetch(company.url)
             except PresenceRejected as exc:
                 return TraceFinding(**base, reject_reason=str(exc))
 

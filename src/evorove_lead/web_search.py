@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Protocol, Sequence
 from urllib.error import URLError
 from urllib.parse import urlencode, urlparse
@@ -61,6 +63,7 @@ class SearchHit:
 
     url: str
     snippet: str
+    published_at: datetime | None = None
 
 
 class WebSearchClient(Protocol):
@@ -83,29 +86,94 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
         url = (item.get("url") or "").strip()
         if not url:
             continue
-        hits.append(SearchHit(url=url, snippet=(item.get("content") or "").strip()))
+        hits.append(
+            SearchHit(
+                url=url,
+                snippet=(item.get("content") or "").strip(),
+                published_at=_published_at(item),
+            )
+        )
     return tuple(hits)
 
 
-class HttpSearxngWebSearchClient:
-    """Query a SearxNG-shaped JSON search endpoint the owner runs herself."""
+def _published_at(item: dict) -> datetime | None:
+    raw = item.get("publishedDate") or item.get("published_at")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    text = raw.strip().replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
 
-    def __init__(self, base_url: str, opener=urlopen) -> None:
+
+class HttpSearxngWebSearchClient:
+    """Query a SearxNG-shaped JSON search endpoint the owner runs herself.
+
+    Transport failures retry a bounded number of times and are not cached.
+    A successful response, including a real empty result, is cached for this
+    process so the same query is not billed twice in one run.
+    """
+
+    def __init__(
+        self,
+        base_url: str,
+        opener=urlopen,
+        *,
+        max_attempts: int = 3,
+        min_interval_seconds: float = 0.0,
+        sleeper=time.sleep,
+    ) -> None:
         self._base_url = _validate_configured_base_url(base_url).rstrip("/")
         self._opener = opener
+        self._max_attempts = min(5, max(1, max_attempts))
+        self._min_interval_seconds = max(0.0, min_interval_seconds)
+        self._sleeper = sleeper
+        self._cache: dict[str, tuple[SearchHit, ...]] = {}
+        self._next_at = 0.0
+        self.cache_hits = 0
+        self.transport_failures = 0
 
     def search(self, query: str) -> Sequence[SearchHit]:
+        cached = self._cache.get(query)
+        if cached is not None:
+            self.cache_hits += 1
+            return cached
+        self._pace()
+        for attempt in range(self._max_attempts):
+            try:
+                hits = self._fetch(query)
+            except (URLError, TimeoutError, OSError):
+                self.transport_failures += 1
+                if attempt + 1 == self._max_attempts:
+                    return ()
+                self._sleeper(0.05 * (attempt + 1))
+                continue
+            self._cache[query] = hits
+            return hits
+        return ()
+
+    def _fetch(self, query: str) -> tuple[SearchHit, ...]:
         query_string = urlencode({"q": query, "format": "json"})
         url = f"{self._base_url}/search?{query_string}"
         request = Request(url, headers={"User-Agent": USER_AGENT})
-        try:
-            with self._opener(request, timeout=SEARCH_TIMEOUT_SECONDS) as response:
-                body = response.read(MAX_BODY_BYTES + 1)
-        except (URLError, TimeoutError, OSError):
-            return ()
+        with self._opener(request, timeout=SEARCH_TIMEOUT_SECONDS) as response:
+            body = response.read(MAX_BODY_BYTES + 1)
         if len(body) > MAX_BODY_BYTES:
             return ()
         return _parse_results(body)
+
+    def _pace(self) -> None:
+        if self._min_interval_seconds <= 0:
+            return
+        now = time.monotonic()
+        wait = self._next_at - now
+        if wait > 0:
+            self._sleeper(wait)
+        self._next_at = time.monotonic() + self._min_interval_seconds
 
 
 def client_from_env() -> WebSearchClient | None:
@@ -115,7 +183,17 @@ def client_from_env() -> WebSearchClient | None:
     if not base_url:
         return None
     try:
-        return HttpSearxngWebSearchClient(base_url)
+        interval = float((os.getenv("LEAD_SEARCH_MIN_INTERVAL_SECONDS") or "0").strip() or "0")
+    except ValueError:
+        interval = 0.0
+    try:
+        attempts = int((os.getenv("LEAD_SEARCH_ATTEMPTS") or "3").strip() or "3")
+    except ValueError:
+        attempts = 3
+    try:
+        return HttpSearxngWebSearchClient(
+            base_url, max_attempts=attempts, min_interval_seconds=interval
+        )
     except PresenceRejected:
         return None
 

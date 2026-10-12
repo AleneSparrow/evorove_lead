@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 from typing import Protocol, Sequence
 
+from evorove_lead.cost_control import maybe_meter
 from evorove_lead.decision_maker import DecisionMaker, _GENERIC_LOCAL_PARTS
 from evorove_lead.platforms import registrable_domain
 
@@ -85,6 +86,7 @@ class AnthropicDecisionMakerCompletion:
     def __init__(self, api_key: str, model: str) -> None:
         self._api_key = api_key
         self._model = model
+        self.last_usage: dict[str, int] = {}
 
     def __repr__(self) -> str:
         return f"AnthropicDecisionMakerCompletion(model={self._model!r})"
@@ -118,6 +120,11 @@ class AnthropicDecisionMakerCompletion:
             for block in body.get("content", [])
             if isinstance(block, dict) and block.get("type") == "text"
         ]
+        usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        self.last_usage = {
+            "input_tokens": int(usage.get("input_tokens") or 0),
+            "output_tokens": int(usage.get("output_tokens") or 0),
+        }
         return "".join(parts)
 
 
@@ -140,7 +147,7 @@ def decision_maker_completion_from_env() -> DecisionMakerCompletion | None:
         raise RuntimeError(
             "ANTHROPIC_API_KEY and ANTHROPIC_MODEL are required when AI_PROVIDER=anthropic"
         )
-    return AnthropicDecisionMakerCompletion(api_key=api_key, model=model)
+    return maybe_meter(AnthropicDecisionMakerCompletion(api_key=api_key, model=model), "deep_reasoning")
 
 
 def find_decision_maker_llm(

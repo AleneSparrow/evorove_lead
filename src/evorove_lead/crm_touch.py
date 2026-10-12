@@ -28,6 +28,7 @@ PERSON_ID_PREFIX = "ppl_"
 EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 LOGGER = logging.getLogger(__name__)
+MAX_DELIVERY_ATTEMPTS = 8
 
 
 def _utcnow() -> datetime:
@@ -241,6 +242,8 @@ def redeliver_pending(
 
     redelivered = 0
     for record in store.pending()[:limit]:
+        if record.attempts >= MAX_DELIVERY_ATTEMPTS:
+            continue
         try:
             http.publish(record.business_id, record.payload)
         except CrmDeliveryError as exc:
