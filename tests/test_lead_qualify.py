@@ -316,7 +316,7 @@ def test_pipeline_does_not_charge_one_business_for_global_spend(monkeypatch):
 
     monkeypatch.setenv("AI_PROVIDER", "anthropic")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
-    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-haiku-5-5")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-sonnet-5-5")
     pipeline = pipeline_from_env(_Spend())
     assert pipeline is not None
     assert pipeline.ledger.prior_global_micros == 90_000_000
@@ -561,4 +561,11 @@ def test_health_and_feedback_route_and_rate_limit(monkeypatch):
 def test_haiku_price_is_not_zero():
     assert cost_micros("claude-haiku-5-5", 1000, 100) == 150
     assert cost_micros("claude-haiku-4-5", 1000, 100) == 1500
+
+
+def test_sonnet_price_matches_the_public_rate():
+    assert cost_micros("claude-sonnet-5-5", 1000, 100) == 3000
+    assert cost_micros("claude-sonnet-5", 1000, 100) == 3000
+    assert cost_micros("claude-sonnet-4-6", 1000, 100) == 4500
+    assert cost_micros("claude-sonnet-4-5-20250929", 1000, 100) is None
     assert NullAnalysisWarehouse().spent_micros() == 0

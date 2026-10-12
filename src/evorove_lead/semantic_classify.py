@@ -1,7 +1,8 @@
 """Claude Haiku classification of one extracted fragment.
 
 The model id comes from configuration. A price that is not in
-``cost_ledger.HAIKU_PRICES_MICROS_PER_MTOK`` blocks the HTTP call.
+``cost_ledger.MODEL_PRICES_MICROS_PER_MTOK`` blocks the HTTP call.
+The model id is ``ANTHROPIC_MODEL``. Sonnet stays the configured model.
 Page text is fenced as untrusted data and is never a system instruction.
 """
 

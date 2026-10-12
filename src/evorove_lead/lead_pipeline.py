@@ -15,8 +15,8 @@ from evorove_lead.cost_ledger import (
     DEFAULT_MAX_CALLS_PER_RUN,
     DEFAULT_MAX_GLOBAL_MICROS,
     DEFAULT_MAX_RUN_MICROS,
-    HAIKU_PRICES_MICROS_PER_MTOK,
-    RECOMMENDED_HAIKU_MODEL,
+    MODEL_PRICES_MICROS_PER_MTOK,
+    RECOMMENDED_MODEL,
     CostLedger,
 )
 from evorove_lead.semantic_classify import AnthropicCompletion, Classification, classify_excerpt
@@ -138,7 +138,8 @@ def pipeline_from_env(warehouse=None) -> LeadPipeline | None:
     """None when the owner left the provider deterministic.
 
     ``AI_PROVIDER=anthropic`` requires a key, a model, and a known price.
-    The recommended model is ``claude-haiku-5-5``.
+    The same ``ANTHROPIC_MODEL`` is used for classification. The current
+    Sonnet id is ``claude-sonnet-5-5``.
     """
 
     provider = (os.getenv("AI_PROVIDER") or "deterministic").strip()
@@ -152,11 +153,11 @@ def pipeline_from_env(warehouse=None) -> LeadPipeline | None:
         raise RuntimeError(
             "ANTHROPIC_API_KEY and ANTHROPIC_MODEL are required when AI_PROVIDER=anthropic"
         )
-    if model not in HAIKU_PRICES_MICROS_PER_MTOK:
+    if model not in MODEL_PRICES_MICROS_PER_MTOK:
         raise RuntimeError(
             "unknown model price blocks paid execution for "
-            f"{model!r}; set ANTHROPIC_MODEL to {RECOMMENDED_HAIKU_MODEL!r} "
-            "or another priced Haiku id"
+            f"{model!r}; set ANTHROPIC_MODEL to {RECOMMENDED_MODEL!r} "
+            "or another priced Sonnet id"
         )
     prior_business = 0
     prior_global = 0

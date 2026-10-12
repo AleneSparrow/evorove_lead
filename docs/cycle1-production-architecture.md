@@ -8,7 +8,7 @@
   -> SearxNG (web_search.HttpSearxngWebSearchClient)
   -> свой fetch (page_extract.fetch_extracted_page)
   -> детерминированный prefilter
-  -> Claude Haiku, только если AI_PROVIDER=anthropic и цена модели известна
+  -> Claude Sonnet (тот же ANTHROPIC_MODEL), только если AI_PROVIDER=anthropic и цена модели известна
   -> проверка цитаты (evidence_check)
   -> сегмент: opportunity | prospect | review | rejected
   -> Cold только для opportunity, который прошёл прежний отбор кандидата
