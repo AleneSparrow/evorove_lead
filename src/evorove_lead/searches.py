@@ -22,11 +22,14 @@ from evorove_lead.business import BusinessSeed
 from evorove_lead.decision_maker_llm import decision_maker_completion_from_env
 from evorove_lead.engine import GenerationStatus, LeadGenerationEngine
 from evorove_lead.hypothesis import GeoRadius
+from evorove_lead.lead_pipeline import pipeline_from_env
 from evorove_lead.marketing_analysis import marketing_analyzer_from_env
+from evorove_lead.page_extract import fetch_extracted_page
 from evorove_lead.market_signal_llm import MarketSignalCompletion
 from evorove_lead.market_signals import MarketSignalStore, check_signals_for_business
 from evorove_lead.presence import HttpPresenceSource
 from evorove_lead.sqlalchemy_models import SearchTargetRow
+from evorove_lead.sqlalchemy_warehouse import warehouse_from_env
 from evorove_lead.web_people_search import WebSearchPeopleSearch
 from evorove_lead.web_search import WebSearchClient, client_from_env
 
@@ -136,10 +139,14 @@ def live_engine() -> LeadGenerationEngine | None:
     return LeadGenerationEngine(
         presence=HttpPresenceSource(),
         hypothesis_search=WebSearchPeopleSearch(
-            client, decision_maker_llm=decision_maker_completion_from_env()
+            client,
+            decision_maker_llm=decision_maker_completion_from_env(),
+            page_extractor=fetch_extracted_page,
         ),
         infer_geo_radius_from_brief=True,
         marketing_analyzer=marketing_analyzer_from_env(),
+        qualifier=pipeline_from_env(warehouse_from_env()),
+        expand_search_plan=True,
     )
 
 

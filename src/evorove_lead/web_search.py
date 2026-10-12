@@ -23,9 +23,9 @@ from evorove_lead.presence import (
     USER_AGENT,
     PresenceRejected,
     _host_is_public,
-    html_to_page_text,
     validate_public_http_url,
 )
+from evorove_lead.result_collect import dedupe_hits
 
 SEARCH_TIMEOUT_SECONDS = 10
 
@@ -90,32 +90,77 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
 class HttpSearxngWebSearchClient:
     """Query a SearxNG-shaped JSON search endpoint the owner runs herself."""
 
-    def __init__(self, base_url: str, opener=urlopen) -> None:
+    def __init__(
+        self,
+        base_url: str,
+        opener=urlopen,
+        *,
+        max_pages: int = 1,
+        max_requests: int | None = None,
+    ) -> None:
         self._base_url = _validate_configured_base_url(base_url).rstrip("/")
         self._opener = opener
+        self._max_pages = max(1, max_pages)
+        self._max_requests = max_requests
+        self._http_calls = 0
+        self._cache: dict[str, tuple[SearchHit, ...]] = {}
 
     def search(self, query: str) -> Sequence[SearchHit]:
-        query_string = urlencode({"q": query, "format": "json"})
-        url = f"{self._base_url}/search?{query_string}"
+        key = " ".join((query or "").split())
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+        collected: list[SearchHit] = []
+        for page in range(1, self._max_pages + 1):
+            if self._max_requests is not None and self._http_calls >= self._max_requests:
+                break
+            body = self._fetch_page(key, page)
+            self._http_calls += 1
+            if body is None:
+                break
+            page_hits = _parse_results(body)
+            if not page_hits:
+                break
+            collected.extend(page_hits)
+        result = dedupe_hits(collected)
+        self._cache[key] = result
+        return result
+
+    def _fetch_page(self, query: str, page: int) -> bytes | None:
+        params = {"q": query, "format": "json"}
+        if page > 1:
+            params["pageno"] = page
+        url = f"{self._base_url}/search?{urlencode(params)}"
         request = Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with self._opener(request, timeout=SEARCH_TIMEOUT_SECONDS) as response:
                 body = response.read(MAX_BODY_BYTES + 1)
         except (URLError, TimeoutError, OSError):
-            return ()
+            return None
         if len(body) > MAX_BODY_BYTES:
-            return ()
-        return _parse_results(body)
+            return None
+        return body
 
 
 def client_from_env() -> WebSearchClient | None:
-    """No `WEB_SEARCH_BASE_URL` -> no client. The engine treats that as unconnected."""
+    """No `WEB_SEARCH_BASE_URL` -> no client. The engine treats that as unconnected.
+
+    ``LEAD_MAX_SEARCH_REQUESTS`` caps HTTP calls for the process-local client.
+    Unset means 30, which is the pilot ceiling. ``0`` leaves the cap off.
+    """
 
     base_url = (os.getenv("WEB_SEARCH_BASE_URL") or "").strip()
     if not base_url:
         return None
+    raw_cap = (os.getenv("LEAD_MAX_SEARCH_REQUESTS") or "").strip()
+    if raw_cap == "0":
+        max_requests = None
+    elif raw_cap:
+        max_requests = int(raw_cap)
+    else:
+        max_requests = 30
     try:
-        return HttpSearxngWebSearchClient(base_url)
+        return HttpSearxngWebSearchClient(base_url, max_requests=max_requests)
     except PresenceRejected:
         return None
 
@@ -123,21 +168,6 @@ def client_from_env() -> WebSearchClient | None:
 def fetch_page_text(url: str, opener=urlopen, host_ok=_host_is_public) -> str:
     """Fetch a public http(s) page's visible text. Same SSRF guard as `presence.py`."""
 
-    validated = validate_public_http_url(url)
-    host = urlparse(validated).hostname or ""
-    if not host_ok(host):
-        raise PresenceRejected("result URL host is not a public site")
-    request = Request(validated, headers={"User-Agent": USER_AGENT})
-    try:
-        with opener(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
-            final_url = getattr(response, "geturl", lambda: validated)()
-            if urlparse(final_url).scheme not in {"http", "https"}:
-                raise PresenceRejected("result redirected off http(s)")
-            body = response.read(MAX_BODY_BYTES + 1)
-    except (URLError, TimeoutError, OSError) as exc:
-        raise PresenceRejected("result page could not be read") from exc
-    if len(body) > MAX_BODY_BYTES:
-        raise PresenceRejected("result page is too large")
-    html = body.decode("utf-8", errors="replace")
-    _, _, body_text = html_to_page_text(html)
-    return body_text
+    from evorove_lead.page_extract import fetch_extracted_page
+
+    return fetch_extracted_page(url, opener=opener, host_ok=host_ok).text

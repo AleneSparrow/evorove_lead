@@ -65,6 +65,12 @@ class TraceFinding:
     geo_hint: str = ""
     hit: PeopleHit | None = None
     reject_reason: str = ""
+    # Optional page facts. Empty means the extractor did not find them.
+    # Callers must not invent a date or an author to fill these in.
+    publication_date: str = ""
+    page_author: str = ""
+    canonical_url: str = ""
+    page_text: str = ""
 
 
 class HypothesisPeopleSearch(Protocol):

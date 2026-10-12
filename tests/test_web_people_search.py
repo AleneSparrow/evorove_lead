@@ -58,9 +58,9 @@ def test_connector_extracts_email_and_keeps_the_hypothesis_query():
     assert finding.reject_reason == ""
 
 
-def test_connector_rejects_off_topic_trace_without_fetching():
+def test_connector_rejects_obvious_spam_without_fetching():
     hypothesis = _hypothesis('"need Weekend catering" near Austin')
-    client = FakeClient((SearchHit(url="https://forum.example/1", snippet="my cat is cute"),))
+    client = FakeClient((SearchHit(url="https://forum.example/1", snippet="buy followers and casino bonus"),))
     fetch_calls = []
 
     def fetch(url: str) -> str:
@@ -74,6 +74,21 @@ def test_connector_rejects_off_topic_trace_without_fetching():
     assert findings[0].hit is None
     assert findings[0].reject_reason
     assert fetch_calls == []
+
+
+def test_connector_fetches_a_paraphrase_without_the_service_keyword():
+    hypothesis = _hypothesis('"need Weekend catering" near Austin')
+    client = FakeClient(
+        (SearchHit(url="https://forum.example/1", snippet="Can someone cook for a birthday this weekend"),)
+    )
+    connector = WebSearchPeopleSearch(
+        client, page_fetcher=_fetcher({"https://forum.example/1": "write jane@example.com"})
+    )
+
+    findings = connector.find(hypothesis)
+
+    assert findings[0].hit is not None
+    assert findings[0].hit.identity == "jane@example.com"
 
 
 def test_connector_rejects_when_page_fetch_fails():

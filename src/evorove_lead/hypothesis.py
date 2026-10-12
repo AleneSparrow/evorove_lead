@@ -211,6 +211,44 @@ def build_hypotheses(
     return tuple(hypotheses)
 
 
+def augment_search_plan(
+    hypotheses: Sequence[Hypothesis], *, service: str, geo_radius: GeoRadius
+) -> tuple[Hypothesis, ...]:
+    """Add a few problem and purchase-intent queries using the offer's own words.
+
+    Does not invent a service. Caps the extras so one brief cannot fan out
+    into an unbounded search.
+    """
+
+    service_text = " ".join((service or "").split())
+    if not service_text:
+        return tuple(hypotheses)
+    seen = {hypothesis.query_template for hypothesis in hypotheses}
+    geo_suffix = _geo_suffix(geo_radius)
+    audience = hypotheses[0].audience_segment if hypotheses else service_text
+    extras: list[Hypothesis] = []
+    for template, kind, description in (
+        (f'"{service_text} problem"{geo_suffix}'.strip(), "need_statement", "Unresolved problem in the client's service words"),
+        (f'"recommend {service_text}"{geo_suffix}'.strip(), "public_ask", "Asks for a recommendation of the client's service"),
+        (f'"who can help with {service_text}"{geo_suffix}'.strip(), "public_ask", "Asks for help with the client's service"),
+    ):
+        if template in seen:
+            continue
+        seen.add(template)
+        extras.append(
+            Hypothesis(
+                audience_segment=audience,
+                channel="web_search",
+                query_template=template,
+                intent_trigger=IntentTrigger(kind=kind, description=description),
+                geo_radius=geo_radius,
+            )
+        )
+        if len(extras) == 3:
+            break
+    return (*hypotheses, *extras)
+
+
 def _prioritize_by_pattern_library(
     hypotheses: list[Hypothesis], suggestions: Sequence
 ) -> tuple[Hypothesis, ...]:

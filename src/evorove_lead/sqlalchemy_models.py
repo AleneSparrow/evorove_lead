@@ -268,6 +268,95 @@ class MarketSignalRow(Base):
     checked_at = Column(DateTime(timezone=True), nullable=False)
 
 
+class LeadQualificationRow(Base):
+    """One semantic reading of one public page. Not a CRM Cold card."""
+
+    __tablename__ = "lead_qualifications"
+
+    id = Column(String(128), primary_key=True)
+    business_id = Column(String(128), nullable=False)
+    hypothesis_id = Column(String(128), nullable=False, default="")
+    trace_id = Column(String(128), nullable=False, default="")
+    source_url = Column(Text, nullable=False)
+    content_sha256 = Column(String(64), nullable=False)
+    query_template = Column(Text, nullable=False, default="")
+    segment = Column(String(16), nullable=False)
+    intent_class = Column(String(32), nullable=False)
+    entity_type = Column(String(16), nullable=False, default="unknown")
+    problem = Column(Text, nullable=True)
+    icp_match = Column(Boolean, nullable=False, default=False)
+    evidence_quote = Column(Text, nullable=True)
+    evidence_verified = Column(Boolean, nullable=False, default=False)
+    publication_date = Column(String(64), nullable=True)
+    confidence = Column(Float, nullable=False, default=0.0)
+    commercial_relevance = Column(String(16), nullable=False, default="unknown")
+    recommended_action = Column(Text, nullable=False, default="")
+    reasoning_summary = Column(Text, nullable=False, default="")
+    model = Column(String(64), nullable=False, default="")
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd_micros = Column(Integer, nullable=False, default=0)
+    cache_hit = Column(Boolean, nullable=False, default=False)
+    blocked_reason = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            "source_url",
+            "content_sha256",
+            name="uq_lead_qualifications_business_url_sha",
+        ),
+        CheckConstraint(
+            "segment IN ('opportunity','prospect','review','rejected')",
+            name="ck_lead_qualifications_segment",
+        ),
+        CheckConstraint(
+            "intent_class IN ('EXPLICIT_INTENT','INFERRED_OPPORTUNITY','ICP_MATCH','INSUFFICIENT_EVIDENCE','IRRELEVANT')",
+            name="ck_lead_qualifications_intent",
+        ),
+    )
+
+
+class LeadFeedbackRow(Base):
+    """One human label. It may move a single hypothesis budget by one step."""
+
+    __tablename__ = "lead_feedback"
+
+    id = Column(String(128), primary_key=True)
+    business_id = Column(String(128), nullable=False)
+    qualification_id = Column(String(128), nullable=False)
+    hypothesis_id = Column(String(128), nullable=False, default="")
+    query_template = Column(Text, nullable=False, default="")
+    kind = Column(String(32), nullable=False)
+    budget_delta = Column(Integer, nullable=False, default=0)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('relevant','irrelevant','incorrect_classification','duplicate','outdated','incorrect_icp','insufficient_evidence')",
+            name="ck_lead_feedback_kind",
+        ),
+        CheckConstraint("budget_delta IN (-1, 0, 1)", name="ck_lead_feedback_delta"),
+    )
+
+
+class LlmUsageRow(Base):
+    """One model call, or a blocked attempt that spent nothing."""
+
+    __tablename__ = "llm_usage"
+
+    id = Column(String(128), primary_key=True)
+    business_id = Column(String(128), nullable=False)
+    model = Column(String(64), nullable=False)
+    input_tokens = Column(Integer, nullable=False, default=0)
+    output_tokens = Column(Integer, nullable=False, default=0)
+    cost_usd_micros = Column(Integer, nullable=False, default=0)
+    cache_hit = Column(Boolean, nullable=False, default=False)
+    blocked_reason = Column(String(64), nullable=False, default="")
+    created_at = Column(DateTime(timezone=True), nullable=False)
+
+
 class CrmDeliveryRow(Base):
     """Outbox queue: CRM lead-touches CRM has not accepted yet.
 
