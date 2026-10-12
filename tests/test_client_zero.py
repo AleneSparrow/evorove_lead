@@ -38,6 +38,7 @@ def test_live_search_turns_on_when_the_owner_points_at_searx(monkeypatch) -> Non
     search = hypothesis_search_from_env()
     assert search is not None
     assert search.connected is True
+    assert search._page_extractor is not None
 
 
 def test_owner_materials_are_deposited_ahead_of_the_live_site(tmp_path: Path) -> None:

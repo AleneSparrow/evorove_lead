@@ -131,7 +131,7 @@ class HttpSearxngWebSearchClient:
         if page > 1:
             params["pageno"] = page
         url = f"{self._base_url}/search?{urlencode(params)}"
-        request = Request(url, headers={"User-Agent": USER_AGENT})
+        request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
         try:
             with self._opener(request, timeout=SEARCH_TIMEOUT_SECONDS) as response:
                 body = response.read(MAX_BODY_BYTES + 1)
@@ -165,8 +165,12 @@ def client_from_env() -> WebSearchClient | None:
         return None
 
 
-def fetch_page_text(url: str, opener=urlopen, host_ok=_host_is_public) -> str:
-    """Fetch a public http(s) page's visible text. Same SSRF guard as `presence.py`."""
+def fetch_page_text(url: str, opener=None, host_ok=_host_is_public) -> str:
+    """Fetch a public http(s) page's visible text. Same SSRF guard as `presence.py`.
+
+    The default opener checks each redirect. Passing ``urlopen`` would
+    follow a hop to a private address before that check can run.
+    """
 
     from evorove_lead.page_extract import fetch_extracted_page
 

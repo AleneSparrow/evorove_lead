@@ -21,7 +21,7 @@ from evorove_lead.decision_maker_llm import (
     decision_maker_completion_from_env,
     find_decision_maker_llm,
 )
-from evorove_lead.page_extract import relevant_fragment
+from evorove_lead.page_extract import fetch_extracted_page, relevant_fragment
 from evorove_lead.platforms import PLATFORM_DOMAINS, is_platform, registrable_domain
 from evorove_lead.prefilter import looks_like_spam
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
@@ -97,7 +97,11 @@ def hypothesis_search_from_env() -> WebSearchPeopleSearch | None:
     client = client_from_env()
     if client is None:
         return None
-    return WebSearchPeopleSearch(client, decision_maker_llm=decision_maker_completion_from_env())
+    return WebSearchPeopleSearch(
+        client,
+        decision_maker_llm=decision_maker_completion_from_env(),
+        page_extractor=fetch_extracted_page,
+    )
 
 
 class WebSearchPeopleSearch:

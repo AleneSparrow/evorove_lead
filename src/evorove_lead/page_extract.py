@@ -29,16 +29,27 @@ _TEXT_TYPES = frozenset({"text/html", "text/plain", "application/xhtml+xml"})
 _SKIP_TAGS = frozenset(
     {"script", "style", "noscript", "nav", "footer", "aside", "iframe", "svg", "form", "button"}
 )
-_CHROME_MARKERS = (
-    "nav",
-    "menu",
-    "footer",
-    "cookie",
-    "advert",
-    "ads",
-    "sidebar",
-    "breadcrumb",
-    "popup",
+_VOID_TAGS = frozenset(
+    {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"}
+)
+# Whole tokens only. A substring match treats class="downloads" as ads
+# and class="unavailable" as navigation, then drops the article.
+_CHROME_MARKERS = frozenset(
+    {
+        "nav",
+        "navbar",
+        "navigation",
+        "menu",
+        "footer",
+        "cookie",
+        "advert",
+        "advertisement",
+        "advertising",
+        "ads",
+        "sidebar",
+        "breadcrumb",
+        "popup",
+    }
 )
 _CACHE_LIMIT = 128
 _EXTRACT_CACHE: "OrderedDict[str, ExtractedPage]" = OrderedDict()
@@ -69,6 +80,9 @@ class _PublicRedirectHandler(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
         try:
             validate_public_http_url(newurl)
+            host = urlparse(newurl).hostname or ""
+            if host:
+                _host_is_public(host)
         except PresenceRejected:
             return None
         return super().redirect_request(req, fp, code, msg, headers, newurl)
@@ -80,10 +94,9 @@ def guarded_urlopen(request, timeout=None):  # noqa: ANN001
 
 
 def _chrome(attrs: list[tuple[str, str | None]]) -> bool:
-    blob = " ".join(
-        f"{name or ''} {value or ''}" for name, value in attrs
-    ).casefold()
-    return any(marker in blob for marker in _CHROME_MARKERS)
+    blob = " ".join(f"{name or ''} {value or ''}" for name, value in attrs).casefold()
+    tokens = set(re.findall(r"[a-z0-9]+", blob))
+    return bool(tokens & _CHROME_MARKERS)
 
 
 class _MainContentParser(HTMLParser):
@@ -101,7 +114,8 @@ class _MainContentParser(HTMLParser):
         lowered = tag.lower()
         attr = {((name or "").lower()): (value or "") for name, value in attrs}
         if self._skip_stack or lowered in _SKIP_TAGS or _chrome(attrs):
-            self._skip_stack.append(lowered)
+            if lowered not in _VOID_TAGS:
+                self._skip_stack.append(lowered)
             return
         if lowered == "title":
             self._in_title = True
@@ -117,10 +131,16 @@ class _MainContentParser(HTMLParser):
                 self.publication_date = stamp
 
     def handle_endtag(self, tag: str) -> None:
-        if self._skip_stack:
-            self._skip_stack.pop()
+        lowered = tag.lower()
+        if lowered in _VOID_TAGS:
             return
-        if tag.lower() == "title":
+        if lowered in self._skip_stack:
+            while self._skip_stack and self._skip_stack[-1] != lowered:
+                self._skip_stack.pop()
+            if self._skip_stack:
+                self._skip_stack.pop()
+            return
+        if lowered == "title":
             self._in_title = False
 
     def handle_data(self, data: str) -> None:

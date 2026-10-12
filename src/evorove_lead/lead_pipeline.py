@@ -161,8 +161,11 @@ def pipeline_from_env(warehouse=None) -> LeadPipeline | None:
     prior_business = 0
     prior_global = 0
     if warehouse is not None and hasattr(warehouse, "spent_micros"):
+        # Global spend is known here. Tenant spend is applied per run by
+        # the engine, once the business id exists. Copying the global
+        # total into the tenant cap would stop a business that has not
+        # spent anything.
         prior_global = int(warehouse.spent_micros(None))
-        prior_business = prior_global
     ledger = CostLedger(
         model,
         max_calls=_int_env("LEAD_MAX_CLASSIFICATIONS_PER_RUN", DEFAULT_MAX_CALLS_PER_RUN),

@@ -221,6 +221,109 @@ def test_extract_keeps_explicit_date_and_author_and_drops_chrome():
     assert "secret" not in page.text
 
 
+def test_extract_keeps_the_article_after_an_image_inside_navigation():
+    html = """
+    <html><body>
+      <nav><img src="/logo.png" alt="logo"><a>Home</a></nav>
+      <div class="downloads"><p>I need a baker this weekend</p></div>
+      <p class="unavailable">Can someone cook for Saturday</p>
+    </body></html>
+    """
+    page = extract_html(SOURCE, html)
+    assert "Home" not in page.text
+    assert "I need a baker this weekend" in page.text
+    assert "Can someone cook for Saturday" in page.text
+
+
+def test_redirect_to_a_private_address_is_not_followed():
+    from evorove_lead.page_extract import _PublicRedirectHandler
+
+    handler = _PublicRedirectHandler()
+    for url in ("http://127.0.0.1/latest/meta-data", "http://169.254.169.254/", "http://10.1.1.1/"):
+        assert handler.redirect_request(None, None, 302, "Found", {}, url) is None
+
+
+def test_geo_rejection_is_not_hidden_by_a_cached_classification():
+    completion = Scripted(_payload("EXPLICIT_INTENT", QUOTE))
+    cache: dict = {}
+    first = _classify(QUOTE, completion, cache=cache)
+    second = _classify(QUOTE, completion, cache=cache, geo_hint="GB")
+    assert first.segment == "opportunity"
+    assert second.segment == "rejected"
+    assert second.intent_class == "IRRELEVANT"
+    assert completion.calls == 1
+
+
+def test_cache_hit_keeps_the_current_source_url():
+    completion = Scripted(_payload("EXPLICIT_INTENT", QUOTE))
+    ledger = CostLedger("claude-haiku-5-5")
+    cache: dict = {}
+    _classify(QUOTE, completion, ledger, cache=cache)
+    again = classify_excerpt(
+        service="Weekend catering",
+        audiences=("busy parents",),
+        source_url="https://other.example/post",
+        source_text=QUOTE,
+        query_template="weekend catering",
+        publication_date="2026-10-01",
+        author=None,
+        geo_hint="",
+        completion=completion,
+        ledger=ledger,
+        cache=cache,
+    )
+    assert again.cache_hit is True
+    assert again.source_url == "https://other.example/post"
+    assert again.publication_date == "2026-10-01"
+    assert completion.calls == 1
+
+
+def test_each_search_run_gets_its_own_call_budget():
+    from evorove_lead.crm_touch import RecordingLeadTouchSink
+
+    friday = "I need weekend catering on Friday night"
+    search = _Search(QUOTE, "jordan@example.com")
+
+    def payload(user: str) -> str:
+        quote = friday if friday in user else QUOTE
+        return _payload("EXPLICIT_INTENT", quote)
+
+    completion = Scripted(payload)
+    ledger = CostLedger("claude-haiku-5-5", max_calls=1)
+    pipeline = LeadPipeline(completion, ledger)
+    engine = LeadGenerationEngine(
+        presence=_Presence(),
+        hypothesis_search=search,
+        warehouse=RecordingAnalysisWarehouse(),
+        lead_touch_sink=RecordingLeadTouchSink(),
+        qualifier=pipeline,
+    )
+    first = engine.generate(BusinessSeed(site_url="https://sunrise.example/", business_id="biz-1"))
+    search.text = friday
+    search.identity = "sam@example.com"
+    second = engine.generate(BusinessSeed(site_url="https://sunrise.example/", business_id="biz-2"))
+    assert first.handoffs
+    assert second.handoffs
+    assert completion.calls == 2
+
+
+def test_pipeline_does_not_charge_one_business_for_global_spend(monkeypatch):
+    from evorove_lead.lead_pipeline import pipeline_from_env
+
+    class _Spend:
+        def spent_micros(self, business_id=None):
+            return 90_000_000 if business_id is None else 0
+
+    monkeypatch.setenv("AI_PROVIDER", "anthropic")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key-not-used")
+    monkeypatch.setenv("ANTHROPIC_MODEL", "claude-haiku-5-5")
+    pipeline = pipeline_from_env(_Spend())
+    assert pipeline is not None
+    assert pipeline.ledger.prior_global_micros == 90_000_000
+    assert pipeline.ledger.prior_business_micros == 0
+    assert pipeline.ledger.authorize(100, 100) is None
+
+
 def test_search_cache_pagination_and_request_cap():
     calls = []
 

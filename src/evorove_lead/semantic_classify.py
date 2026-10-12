@@ -323,13 +323,6 @@ def classify_excerpt(
 
     fragment = relevant_fragment(source_text, query_template, _FRAGMENT_LIMIT)
     digest = content_sha256(fragment)
-    cache_key = f"{ledger.model}:{digest}"
-    cached = cache.get(cache_key)
-    if cached is not None:
-        ledger.cache_hits += 1
-        return Classification(
-            **{**cached.__dict__, "cache_hit": True, "cost_usd_micros": 0, "input_tokens": 0, "output_tokens": 0}
-        )
     reason = prefilter_reason(
         fragment,
         source_url,
@@ -337,15 +330,29 @@ def classify_excerpt(
         geo_hint=geo_hint,
     )
     if reason is not None:
-        result = _insufficient(
+        return _insufficient(
             source_url=source_url,
             digest=digest,
             model=ledger.model,
             reason=reason,
             query_template=query_template,
         )
-        cache[cache_key] = result
-        return result
+    cache_key = f"{ledger.model}:{digest}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        ledger.cache_hits += 1
+        return Classification(
+            **{
+                **cached.__dict__,
+                "cache_hit": True,
+                "cost_usd_micros": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "source_url": source_url,
+                "publication_date": publication_date or None,
+                "query_template": query_template,
+            }
+        )
 
     user = build_user_prompt(
         service=service,

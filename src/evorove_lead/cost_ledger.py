@@ -69,6 +69,15 @@ class CostLedger:
         self.input_tokens = 0
         self.output_tokens = 0
 
+    def reset_run(self) -> None:
+        """Start a new search run. Prior tenant and global spend stay."""
+
+        self.calls = 0
+        self.cache_hits = 0
+        self.run_micros = 0
+        self.input_tokens = 0
+        self.output_tokens = 0
+
     def authorize(self, input_tokens: int, output_tokens: int) -> str | None:
         """Return a block reason, or None when a paid call is allowed."""
 

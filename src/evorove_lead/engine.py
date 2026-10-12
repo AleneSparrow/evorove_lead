@@ -380,11 +380,15 @@ class LeadGenerationEngine:
                 geo_radius=geo_radius,
             )
         suppressed: set[str] = set()
-        if self._qualifier is not None and hasattr(self._warehouse, "spent_micros"):
-            self._qualifier.ledger.prior_global_micros = int(self._warehouse.spent_micros(None))
-            self._qualifier.ledger.prior_business_micros = int(
-                self._warehouse.spent_micros(business_id or None)
-            )
+        if self._qualifier is not None:
+            # One API process reuses the pipeline. Run caps belong to this
+            # search, not to every search since the process started.
+            self._qualifier.ledger.reset_run()
+            if hasattr(self._warehouse, "spent_micros"):
+                self._qualifier.ledger.prior_global_micros = int(self._warehouse.spent_micros(None))
+                self._qualifier.ledger.prior_business_micros = int(
+                    self._warehouse.spent_micros(business_id or None)
+                )
         if self._qualifier is not None and business_id and hasattr(self._warehouse, "suppressed_queries"):
             suppressed = set(self._warehouse.suppressed_queries(business_id))
         for hypothesis in hypotheses:
