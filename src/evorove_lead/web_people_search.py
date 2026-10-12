@@ -21,7 +21,9 @@ from evorove_lead.decision_maker_llm import (
     decision_maker_completion_from_env,
     find_decision_maker_llm,
 )
+from evorove_lead.page_extract import fetch_extracted_page, relevant_fragment
 from evorove_lead.platforms import PLATFORM_DOMAINS, is_platform, registrable_domain
+from evorove_lead.prefilter import looks_like_spam
 from evorove_lead.presence import PresenceRejected, validate_public_http_url
 from evorove_lead.search import PeopleHit, TraceFinding
 from evorove_lead.web_search import SearchHit, WebSearchClient, client_from_env, fetch_page_text
@@ -29,17 +31,8 @@ from evorove_lead.web_search import SearchHit, WebSearchClient, client_from_env,
 if TYPE_CHECKING:
     from evorove_lead.hypothesis import Hypothesis
 
-_KEYWORD_RE = re.compile(r"[A-Za-z]{4,}")
-_STOPWORDS = frozenset({"near", "need", "looking", "for", "with"})
-PAGE_TEXT_EXCERPT_CHARS = 280
-
-# Deliberately strict: a plain 7-15 digit run (like observations.py's
-# owner-deposited-JSONL parser uses) is far too noisy over a whole page --
-# ZIP+4, prices, dates, and IDs all look like phone numbers under that
-# rule. This requires actual phone punctuation (parens/space/dot/dash)
-# between each group, which a "94105-1234" ZIP+4 or a "$1,234.5678"
-# price does not have.
 _STRICT_PHONE_RE = re.compile(r"(?<!\d)\(?\d{3}\)?[ .-]\d{3}[ .-]\d{4}(?!\d)")
+PAGE_TEXT_EXCERPT_CHARS = 280
 
 
 def _extract_phone(text: str) -> str | None:
@@ -84,24 +77,15 @@ def pick_contact_email(page_url: str, page_text: str, *, business: bool) -> str 
     return None
 
 
-def _keywords(query_template: str) -> tuple[str, ...]:
-    words = {w.casefold() for w in _KEYWORD_RE.findall(query_template)}
-    return tuple(words - _STOPWORDS)
-
-
 def _on_topic(hypothesis: "Hypothesis", snippet: str) -> bool:
-    """Heuristic topic check: does anything from the query show up in the result?
+    """Skip obvious spam. Missing keywords are not enough to drop a result.
 
-    Lightweight by design (contract calls this an "анализ следа" gate, not
-    full re-analysis) -- `candidate.py` still does the real offer-fit check
-    once a person is extracted.
+    A paraphrase with none of the query's words still gets fetched so the
+    later pre-filter and classifier can read it. Spam does not.
     """
 
-    keywords = _keywords(hypothesis.query_template)
-    if not keywords:
-        return True
-    folded = snippet.casefold()
-    return any(word in folded for word in keywords)
+    del hypothesis
+    return not looks_like_spam(snippet)
 
 
 def hypothesis_search_from_env() -> WebSearchPeopleSearch | None:
@@ -113,7 +97,11 @@ def hypothesis_search_from_env() -> WebSearchPeopleSearch | None:
     client = client_from_env()
     if client is None:
         return None
-    return WebSearchPeopleSearch(client, decision_maker_llm=decision_maker_completion_from_env())
+    return WebSearchPeopleSearch(
+        client,
+        decision_maker_llm=decision_maker_completion_from_env(),
+        page_extractor=fetch_extracted_page,
+    )
 
 
 class WebSearchPeopleSearch:
@@ -131,13 +119,21 @@ class WebSearchPeopleSearch:
         client: WebSearchClient,
         page_fetcher=fetch_page_text,
         decision_maker_llm: DecisionMakerCompletion | None = None,
+        page_extractor=None,
     ) -> None:
         self._client = client
         self._page_fetcher = page_fetcher
-        # None keeps module 3's regex-only heuristic. A set completion adds
-        # the LLM read as a fallback for a page the heuristic can't parse.
         self._decision_maker_llm = decision_maker_llm
+        self._page_extractor = page_extractor
+        self._extracted = {}
         self.connected = True
+
+    def _fetch_text(self, url: str) -> str:
+        if self._page_extractor is None:
+            return self._page_fetcher(url)
+        page = self._page_extractor(url)
+        self._extracted[url] = page
+        return page.text
 
     def find(self, hypothesis: "Hypothesis") -> Sequence[TraceFinding]:
         if hypothesis.intent_trigger.kind == "business_listing":
@@ -208,7 +204,7 @@ class WebSearchPeopleSearch:
             return TraceFinding(**base, reject_reason=str(exc))
 
         try:
-            page_text = self._page_fetcher(search_hit.url)
+            page_text = self._fetch_text(search_hit.url)
         except PresenceRejected as exc:
             return TraceFinding(**base, reject_reason=str(exc))
 
@@ -240,7 +236,7 @@ class WebSearchPeopleSearch:
         if not _on_topic(hypothesis, company.snippet):
             return TraceFinding(**base, reject_reason="trace is not about this hypothesis")
 
-        pages = fetch_candidate_pages(company.url, self._page_fetcher)
+        pages = fetch_candidate_pages(company.url, self._fetch_text)
         decision_maker = heuristic_decision_maker(pages, company.registrable_domain)
         if decision_maker is None and self._decision_maker_llm is not None:
             decision_maker = find_decision_maker_llm(pages, company.registrable_domain, self._decision_maker_llm)
@@ -267,7 +263,7 @@ class WebSearchPeopleSearch:
             page_text = homepage_text
         else:
             try:
-                page_text = self._page_fetcher(company.url)
+                page_text = self._fetch_text(company.url)
             except PresenceRejected as exc:
                 return TraceFinding(**base, reject_reason=str(exc))
 
@@ -278,6 +274,7 @@ class WebSearchPeopleSearch:
         self, base: dict, excerpt: str, url: str, page_text: str, *, source_kind: str
     ) -> TraceFinding:
         email = pick_contact_email(url, page_text, business=source_kind == "business")
+        meta = self._page_meta(url)
         if email is not None:
             hit = PeopleHit(
                 identity=email,
@@ -286,7 +283,7 @@ class WebSearchPeopleSearch:
                 channel="email",
                 source_kind=source_kind,
             )
-            return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit)
+            return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit, page_text=relevant_fragment(page_text, base["query_used"]), **meta)
 
         phone = _extract_phone(page_text)
         if phone is not None:
@@ -297,9 +294,21 @@ class WebSearchPeopleSearch:
                 channel="phone",  # never texted cold (TCPA)
                 source_kind=source_kind,
             )
-            return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit)
+            return TraceFinding(**{**base, "raw_text": excerpt}, hit=hit, page_text=relevant_fragment(page_text, base["query_used"]), **meta)
 
         return TraceFinding(
             **{**base, "raw_text": excerpt},
             reject_reason="no email or phone found on the page",
+            page_text=relevant_fragment(page_text, base["query_used"]),
+            **meta,
         )
+
+    def _page_meta(self, url: str) -> dict[str, str]:
+        page = self._extracted.get(url)
+        if page is None:
+            return {}
+        return {
+            "publication_date": page.publication_date or "",
+            "page_author": page.author or "",
+            "canonical_url": page.canonical_url or "",
+        }

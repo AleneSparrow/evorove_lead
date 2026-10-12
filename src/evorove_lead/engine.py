@@ -5,7 +5,7 @@ Does not message the person, book a slot, or run a sales conversation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Sequence
@@ -16,6 +16,12 @@ from evorove_lead.selection import Selection, SelectionProfile, select
 from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.geo import infer_geo_radius
 from evorove_lead.hypothesis import GeoRadius, Hypothesis, build_hypotheses, verify_hypothesis
+from evorove_lead.lead_pipeline import (
+    LeadPipeline,
+    record_from_classification,
+    usage_from_classification,
+)
+from evorove_lead.page_extract import content_sha256, relevant_fragment
 from evorove_lead.marketing_analysis import (
     MarketingAnalysis,
     MarketingAnalysisRejected,
@@ -92,6 +98,8 @@ class LeadGenerationEngine:
         pattern_library: PatternLibrary | None = None,
         infer_geo_radius_from_brief: bool = False,
         marketing_analyzer: MarketingAnalyzer | None = None,
+        qualifier: LeadPipeline | None = None,
+        expand_search_plan: bool = False,
     ) -> None:
         self._presence = presence
         self._people_search = people_search or UnconnectedPeopleSearch()
@@ -116,6 +124,9 @@ class LeadGenerationEngine:
         # None keeps the literal "serves X" audience path. A set analyzer
         # replaces those search audiences with grounded inferences.
         self._marketing_analyzer = marketing_analyzer
+        # None keeps the existing trace -> candidate path with no model call.
+        self._qualifier = qualifier
+        self._expand_search_plan = expand_search_plan
 
     def generate(
         self, seed: BusinessSeed, *, extra_hypotheses: Sequence[Hypothesis] = ()
@@ -360,7 +371,39 @@ class LeadGenerationEngine:
                 business_archetype=seed.business_archetype,
             )
         hypotheses = (*hypotheses, *extra_hypotheses)
+        if self._expand_search_plan and offer.what_we_sell:
+            from evorove_lead.hypothesis import augment_search_plan
+
+            hypotheses = augment_search_plan(
+                hypotheses,
+                service=offer.what_we_sell[0].text,
+                geo_radius=geo_radius,
+            )
+        suppressed: set[str] = set()
+        if self._qualifier is not None:
+            # One API process reuses the pipeline. Run caps belong to this
+            # search, not to every search since the process started.
+            self._qualifier.ledger.reset_run()
+            if hasattr(self._warehouse, "spent_micros"):
+                self._qualifier.ledger.prior_global_micros = int(self._warehouse.spent_micros(None))
+                self._qualifier.ledger.prior_business_micros = int(
+                    self._warehouse.spent_micros(business_id or None)
+                )
+        if self._qualifier is not None and business_id and hasattr(self._warehouse, "suppressed_queries"):
+            suppressed = set(self._warehouse.suppressed_queries(business_id))
         for hypothesis in hypotheses:
+            if hypothesis.query_template in suppressed:
+                if business_id:
+                    self._warehouse.save_hypothesis(
+                        _hypothesis_record(
+                            new_id("hypothesis"),
+                            business_id,
+                            brief_id,
+                            replace(hypothesis, status="paused"),
+                            now,
+                        )
+                    )
+                continue
             hypothesis_id = new_id("hypothesis") if business_id else ""
             findings = tuple(self._hypothesis_search.find(hypothesis))
             verified = verify_hypothesis(
@@ -377,6 +420,16 @@ class LeadGenerationEngine:
                     self._warehouse.save_trace(
                         _finding_to_trace_record(trace_id, business_id, hypothesis_id, finding)
                     )
+                qualification_segment = self._qualify_finding(
+                    business_id=business_id,
+                    hypothesis_id=hypothesis_id,
+                    trace_id=trace_id,
+                    service=offer.what_we_sell[0].text if offer.what_we_sell else "",
+                    audiences=tuple(claim.text for claim in offer.who_may_fit),
+                    hypothesis_query=hypothesis.query_template,
+                    finding=finding,
+                    now=now,
+                )
                 if finding.hit is None:
                     if hypothesis_id:
                         self._warehouse.save_rejected_trace(
@@ -384,6 +437,14 @@ class LeadGenerationEngine:
                         )
                     continue
                 hit = finding.hit
+                if qualification_segment not in {None, "opportunity"}:
+                    why = f"{qualification_segment} is not a Cold opportunity"
+                    rejected.append(RejectedHit(identity=hit.identity, why=why))
+                    if hypothesis_id:
+                        self._warehouse.save_candidate(
+                            _rejected_hit_to_candidate_record(business_id, hypothesis_id, hit, why)
+                        )
+                    continue
                 try:
                     candidate, selection = _accept_hit(hit, profile)
                 except CandidateRejected as exc:
@@ -439,6 +500,52 @@ class LeadGenerationEngine:
             handoffs=tuple(handoffs),
             rejected=tuple(rejected),
         )
+
+    def _qualify_finding(
+        self,
+        *,
+        business_id: str,
+        hypothesis_id: str,
+        trace_id: str,
+        service: str,
+        audiences: tuple[str, ...],
+        hypothesis_query: str,
+        finding,
+        now: datetime,
+    ) -> str | None:
+        if self._qualifier is None:
+            return None
+        source_text = finding.page_text or finding.raw_text
+        fragment = relevant_fragment(source_text, hypothesis_query)
+        digest = content_sha256(fragment)
+        if business_id and hasattr(self._warehouse, "find_qualification_by_sha"):
+            existing = self._warehouse.find_qualification_by_sha(business_id, digest)
+            if existing is not None:
+                return existing.segment
+        classification = self._qualifier.qualify(
+            service=service,
+            audiences=audiences,
+            source_url=finding.canonical_url or finding.url,
+            source_text=source_text,
+            query_template=hypothesis_query,
+            publication_date=finding.publication_date or None,
+            author=finding.page_author or None,
+            geo_hint=finding.geo_hint or "",
+        )
+        if business_id and hasattr(self._warehouse, "save_qualification"):
+            self._warehouse.save_qualification(
+                record_from_classification(
+                    classification,
+                    business_id=business_id,
+                    hypothesis_id=hypothesis_id,
+                    trace_id=trace_id,
+                    now=now,
+                )
+            )
+            usage = usage_from_classification(classification, business_id=business_id, now=now)
+            if usage is not None and hasattr(self._warehouse, "save_llm_usage"):
+                self._warehouse.save_llm_usage(usage)
+        return classification.segment
 
 
 class _StaticProbe:

@@ -17,3 +17,12 @@
 - Do not add `SalesStage` or `ProcessState`. Do not implement email/SMS send or a queue of “write to this phone.”
 - Do not train a model, approve knowledge cards, or download pirated books.
 - Keep changes inside the assigned file scope. Run focused tests for changed behavior. Do not weaken tests to accommodate an implementation.
+
+## Cursor Cloud specific instructions
+
+- Install with `python3 -m pip install --user -e ".[dev]"`, then `python3 -m playwright install --with-deps chromium`. Login shells do not load `~/.local/bin`; symlink `pytest`, `uvicorn`, `alembic`, and `playwright` into `/usr/local/bin`.
+- The render test in `tests/test_rendering.py` needs that Chromium binary. Without it the import succeeds and the test fails.
+- Local Postgres for this repo is not the CRM database. Without Docker, start it with `sudo pg_ctlcluster 16 main start`. The role and database are both `evorove_lead`. Use port 5432. `docker compose` still publishes 5435.
+- `python3 -m pytest` is the suite. `GET /health` on `uvicorn evorove_lead.api:app --host 0.0.0.0 --port 8002` does not need `INTERNAL_TASK_SECRET`.
+- Do not put `ANTHROPIC_API_KEY` into the agent environment. An unknown `ANTHROPIC_MODEL` price blocks a paid classification instead of treating the price as zero.
+

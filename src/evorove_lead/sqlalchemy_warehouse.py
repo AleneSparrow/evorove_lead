@@ -26,6 +26,9 @@ from evorove_lead.sqlalchemy_models import (
     CrmDeliveryRow,
     HypothesisOutcomeRow,
     HypothesisRow,
+    LeadFeedbackRow,
+    LeadQualificationRow,
+    LlmUsageRow,
     RejectedTraceRow,
     TraceRow,
 )
@@ -33,9 +36,12 @@ from evorove_lead.warehouse import (
     AnalysisWarehouse,
     BriefRecord,
     CandidateRecord,
+    FeedbackRecord,
     HypothesisOutcomeRecord,
     HypothesisRecord,
+    LlmUsageRecord,
     NullAnalysisWarehouse,
+    QualificationRecord,
     RejectedTraceRecord,
     TraceRecord,
     new_id,
@@ -237,6 +243,108 @@ def _outcome_from_row(row: HypothesisOutcomeRow) -> HypothesisOutcomeRecord:
     )
 
 
+def _qualification_to_row(record: QualificationRecord) -> LeadQualificationRow:
+    return LeadQualificationRow(
+        id=record.id,
+        business_id=record.business_id,
+        hypothesis_id=record.hypothesis_id,
+        trace_id=record.trace_id,
+        source_url=record.source_url,
+        content_sha256=record.content_sha256,
+        query_template=record.query_template,
+        segment=record.segment,
+        intent_class=record.intent_class,
+        entity_type=record.entity_type,
+        problem=record.problem or None,
+        icp_match=record.icp_match,
+        evidence_quote=record.evidence_quote or None,
+        evidence_verified=record.evidence_verified,
+        publication_date=record.publication_date or None,
+        confidence=record.confidence,
+        commercial_relevance=record.commercial_relevance,
+        recommended_action=record.recommended_action,
+        reasoning_summary=record.reasoning_summary,
+        model=record.model,
+        input_tokens=record.input_tokens,
+        output_tokens=record.output_tokens,
+        cost_usd_micros=record.cost_usd_micros,
+        cache_hit=record.cache_hit,
+        blocked_reason=record.blocked_reason,
+        created_at=record.created_at,
+    )
+
+
+def _qualification_from_row(row: LeadQualificationRow) -> QualificationRecord:
+    return QualificationRecord(
+        id=row.id,
+        business_id=row.business_id,
+        hypothesis_id=row.hypothesis_id or "",
+        trace_id=row.trace_id or "",
+        source_url=row.source_url,
+        content_sha256=row.content_sha256,
+        query_template=row.query_template or "",
+        segment=row.segment,
+        intent_class=row.intent_class,
+        entity_type=row.entity_type or "unknown",
+        problem=row.problem or "",
+        icp_match=bool(row.icp_match),
+        evidence_quote=row.evidence_quote or "",
+        evidence_verified=bool(row.evidence_verified),
+        publication_date=row.publication_date or "",
+        confidence=row.confidence or 0.0,
+        commercial_relevance=row.commercial_relevance or "unknown",
+        recommended_action=row.recommended_action or "",
+        reasoning_summary=row.reasoning_summary or "",
+        model=row.model or "",
+        input_tokens=row.input_tokens or 0,
+        output_tokens=row.output_tokens or 0,
+        cost_usd_micros=row.cost_usd_micros or 0,
+        cache_hit=bool(row.cache_hit),
+        blocked_reason=row.blocked_reason or "",
+        created_at=row.created_at,
+    )
+
+
+def _feedback_to_row(record: FeedbackRecord) -> LeadFeedbackRow:
+    return LeadFeedbackRow(
+        id=record.id,
+        business_id=record.business_id,
+        qualification_id=record.qualification_id,
+        hypothesis_id=record.hypothesis_id,
+        query_template=record.query_template,
+        kind=record.kind,
+        budget_delta=record.budget_delta,
+        created_at=record.created_at,
+    )
+
+
+def _feedback_from_row(row: LeadFeedbackRow) -> FeedbackRecord:
+    return FeedbackRecord(
+        id=row.id,
+        business_id=row.business_id,
+        qualification_id=row.qualification_id,
+        hypothesis_id=row.hypothesis_id or "",
+        query_template=row.query_template or "",
+        kind=row.kind,
+        budget_delta=row.budget_delta,
+        created_at=row.created_at,
+    )
+
+
+def _usage_to_row(record: LlmUsageRecord) -> LlmUsageRow:
+    return LlmUsageRow(
+        id=record.id,
+        business_id=record.business_id,
+        model=record.model,
+        input_tokens=record.input_tokens,
+        output_tokens=record.output_tokens,
+        cost_usd_micros=record.cost_usd_micros,
+        cache_hit=record.cache_hit,
+        blocked_reason=record.blocked_reason,
+        created_at=record.created_at,
+    )
+
+
 class SqlAlchemyAnalysisWarehouse:
     """Tenant-scoped analysis warehouse backed by Postgres (or SQLite in tests)."""
 
@@ -347,6 +455,100 @@ class SqlAlchemyAnalysisWarehouse:
                 .order_by(HypothesisOutcomeRow.recorded_at)
             )
             return tuple(_outcome_from_row(row) for row in rows)
+
+    def save_qualification(self, record: QualificationRecord) -> QualificationRecord:
+        with self._session_factory() as session:
+            existing = session.scalar(
+                select(LeadQualificationRow).where(
+                    LeadQualificationRow.business_id == record.business_id,
+                    LeadQualificationRow.source_url == record.source_url,
+                    LeadQualificationRow.content_sha256 == record.content_sha256,
+                )
+            )
+            if existing is not None:
+                return _qualification_from_row(existing)
+            session.add(_qualification_to_row(record))
+            try:
+                session.commit()
+            except Exception:
+                session.rollback()
+                existing = session.scalar(
+                    select(LeadQualificationRow).where(
+                        LeadQualificationRow.business_id == record.business_id,
+                        LeadQualificationRow.source_url == record.source_url,
+                        LeadQualificationRow.content_sha256 == record.content_sha256,
+                    )
+                )
+                if existing is not None:
+                    return _qualification_from_row(existing)
+                raise
+        return record
+
+    def list_qualifications(self, business_id: str):
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(LeadQualificationRow)
+                .where(LeadQualificationRow.business_id == business_id)
+                .order_by(LeadQualificationRow.created_at)
+            )
+            return tuple(_qualification_from_row(row) for row in rows)
+
+    def get_qualification(self, business_id: str, qualification_id: str):
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(LeadQualificationRow).where(
+                    LeadQualificationRow.business_id == business_id,
+                    LeadQualificationRow.id == qualification_id,
+                )
+            )
+            return _qualification_from_row(row) if row is not None else None
+
+    def find_qualification_by_sha(self, business_id: str, content_sha256: str):
+        with self._session_factory() as session:
+            row = session.scalar(
+                select(LeadQualificationRow).where(
+                    LeadQualificationRow.business_id == business_id,
+                    LeadQualificationRow.content_sha256 == content_sha256,
+                )
+            )
+            return _qualification_from_row(row) if row is not None else None
+
+    def save_feedback(self, record: FeedbackRecord) -> None:
+        with self._session_factory() as session:
+            session.merge(_feedback_to_row(record))
+            session.commit()
+
+    def list_feedback(self, business_id: str):
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(LeadFeedbackRow)
+                .where(LeadFeedbackRow.business_id == business_id)
+                .order_by(LeadFeedbackRow.created_at)
+            )
+            return tuple(_feedback_from_row(row) for row in rows)
+
+    def suppressed_queries(self, business_id: str):
+        with self._session_factory() as session:
+            rows = session.scalars(
+                select(LeadFeedbackRow.query_template).where(
+                    LeadFeedbackRow.business_id == business_id,
+                    LeadFeedbackRow.kind.in_(("irrelevant", "incorrect_icp", "outdated")),
+                    LeadFeedbackRow.query_template != "",
+                )
+            )
+            return tuple(rows)
+
+    def save_llm_usage(self, record: LlmUsageRecord) -> None:
+        with self._session_factory() as session:
+            session.merge(_usage_to_row(record))
+            session.commit()
+
+    def spent_micros(self, business_id: str | None = None) -> int:
+        with self._session_factory() as session:
+            query = select(func.coalesce(func.sum(LlmUsageRow.cost_usd_micros), 0))
+            if business_id is not None:
+                query = query.where(LlmUsageRow.business_id == business_id)
+            return int(session.scalar(query) or 0)
 
 
 def create_all(engine) -> None:

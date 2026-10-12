@@ -143,15 +143,31 @@ def validate_public_http_url(url: str) -> str:
         parsed_ip = ipaddress.ip_address(host)
     except ValueError:
         parsed_ip = None
-    if parsed_ip is not None and (
+    if host in _METADATA_HOSTS:
+        raise PresenceRejected("site URL host is not a public site")
+    if parsed_ip is not None and _ip_is_blocked(parsed_ip):
+        raise PresenceRejected("site URL host is not a public site")
+    return raw
+
+
+_METADATA_HOSTS = frozenset(
+    {
+        "metadata.google.internal",
+        "metadata.google.com",
+        "instance-data",
+    }
+)
+
+
+def _ip_is_blocked(parsed_ip: ipaddress._BaseAddress) -> bool:
+    return bool(
         parsed_ip.is_private
         or parsed_ip.is_loopback
         or parsed_ip.is_link_local
         or parsed_ip.is_reserved
         or parsed_ip.is_multicast
-    ):
-        raise PresenceRejected("site URL host is not a public site")
-    return raw
+        or parsed_ip.is_unspecified
+    )
 
 
 def _host_is_public(host: str) -> bool:
@@ -167,13 +183,7 @@ def _host_is_public(host: str) -> bool:
             parsed_ip = ipaddress.ip_address(sockaddr[0])
         except ValueError:
             continue
-        if (
-            parsed_ip.is_private
-            or parsed_ip.is_loopback
-            or parsed_ip.is_link_local
-            or parsed_ip.is_reserved
-            or parsed_ip.is_multicast
-        ):
+        if _ip_is_blocked(parsed_ip):
             return False
     return True
 
