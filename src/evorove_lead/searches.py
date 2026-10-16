@@ -133,13 +133,19 @@ def live_engine() -> LeadGenerationEngine | None:
     client = client_from_env()
     if client is None:
         return None
+    from evorove_lead.sqlalchemy_warehouse import warehouse_from_env
+    from evorove_lead.research_config import research_pipeline_from_env
+    warehouse = warehouse_from_env()
+    research = research_pipeline_from_env(warehouse, client)
     return LeadGenerationEngine(
+        warehouse=warehouse,
+        research_pipeline=research,
         presence=HttpPresenceSource(),
         hypothesis_search=WebSearchPeopleSearch(
-            client, decision_maker_llm=decision_maker_completion_from_env()
+            client, decision_maker_llm=None if research else decision_maker_completion_from_env()
         ),
         infer_geo_radius_from_brief=True,
-        marketing_analyzer=marketing_analyzer_from_env(),
+        marketing_analyzer=None if research else marketing_analyzer_from_env(),
     )
 
 
@@ -153,8 +159,8 @@ def run_target(store: SearchTargetStore, engine: LeadGenerationEngine, target: S
             BusinessSeed(site_url=target.site_url, business_id=target.business_id, business_archetype=target.business_archetype)
         )
         done = replace(target, last_run_at=now, last_status=result.status.value, last_cold=len(result.handoffs))
-    except Exception:  # noqa: BLE001 -- recorded; the next cron run tries again
-        LOGGER.exception("search_run_failed business_id=%s", target.business_id)
+    except Exception as exc:  # noqa: BLE001 -- recorded; the next cron run tries again
+        LOGGER.error("search_run_failed business_id=%s error_type=%s", target.business_id, type(exc).__name__)
         done = replace(target, last_run_at=now, last_status="failed", last_cold=0)
     store.save(done)
     return done
@@ -194,6 +200,15 @@ def run_due_market_signals(
     """
 
     checked = triggered = cold = 0
+    if getattr(engine, "_research_pipeline", None) is not None:
+        # Market research is now inside the same bounded pipeline. Do not call
+        # the legacy unbudgeted headline reader before entering it.
+        for target in targets.all_targets():
+            checked += 1
+            outcome = run_target(targets, engine, target)
+            triggered += 1
+            cold += outcome.last_cold
+        return {"checked": checked, "triggered": triggered, "cold": cold}
     for target in targets.all_targets():
         hypotheses = check_signals_for_business(
             target.business_id, target.business_archetype, GeoRadius(), web_search_client, signal_store, llm
@@ -211,8 +226,8 @@ def run_due_market_signals(
                 ),
                 extra_hypotheses=hypotheses,
             )
-        except Exception:  # noqa: BLE001 -- one business's failure must not stop the sweep
-            LOGGER.exception("market_signal_run_failed business_id=%s", target.business_id)
+        except Exception as exc:  # noqa: BLE001 -- one business's failure must not stop the sweep
+            LOGGER.error("market_signal_run_failed business_id=%s error_type=%s", target.business_id, type(exc).__name__)
             continue
         cold += len(result.handoffs)
     return {"checked": checked, "triggered": triggered, "cold": cold}

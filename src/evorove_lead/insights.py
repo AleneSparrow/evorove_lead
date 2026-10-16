@@ -223,6 +223,7 @@ def _business_page(
     traces_by_hypothesis: dict[str, tuple[TraceRecord, ...]],
     candidates_by_hypothesis: dict[str, tuple[CandidateRecord, ...]],
     rejected: tuple[RejectedTraceRecord, ...],
+    research_html: str = "",
 ) -> str:
     hypothesis_html = "".join(
         _hypothesis_card(
@@ -240,12 +241,40 @@ def _business_page(
 <h1>{escape(business_id)}</h1>
 <p class="muted">{len(hypotheses)} hypothesis(es) · {total_cold} candidate(s) reached Cold ·
 {len(rejected)} trace(s) rejected outright</p>
+{research_html}
 {_brief_section(briefs)}
 <h2>Hypotheses — the search criteria, and what each turned up</h2>
 {hypothesis_html}
 {_rejected_traces_section(rejected)}
 """
     return _PAGE.format(title=f"Cycle 1 — {escape(business_id)}", body=body)
+
+
+def _research_section(warehouse, business_id):
+    if not hasattr(warehouse, "database_engine"):
+        return ""
+    from sqlalchemy import inspect
+    if not inspect(warehouse.database_engine).has_table("research_documents"):
+        return '<p class="muted">Research migrations have not been applied.</p>'
+    from evorove_lead.intelligence_store import IntelligenceStore
+    store = IntelligenceStore(warehouse.database_engine)
+    runs = store.list(business_id, "run")[-10:]
+    if not runs: return ""
+    rows = []
+    for run in runs:
+        usage = run.get("usage", {})
+        rows.append(f'<div class="card">{escape(str(run.get("started_at", "")))} · '
+                    f'{escape(str(run.get("status", "unknown")))} · '
+                    f'{"Dry run" if run.get("dry_run") else "CRM delivery enabled"} · '
+                    f'{int(run.get("qualified", 0))} qualified · {int(run.get("handoffs", 0))} queued for CRM'
+                    f'<p>{escape(str(run.get("stop_reason", "")))}</p>'
+                    f'<p>Queries: {int(usage.get("queries", 0))}; model calls: {int(usage.get("llm_calls", 0))}; '
+                    f'estimated LLM cost: ${int(usage.get("cost_microusd", 0))/1000000:.4f}</p></div>')
+    for decision in store.list(business_id, "qualification")[-20:]:
+        gate = decision.get("gate", {})
+        codes = ", ".join(gate.get("codes", []))
+        rows.append(f'<div class="card">{escape(str(gate.get("decision", "unknown")))}: {escape(codes)}</div>')
+    return '<h2>Evidence research</h2>' + "".join(rows)
 
 
 def register_insights_routes(app, warehouse: AnalysisWarehouse) -> None:
@@ -277,6 +306,7 @@ def register_insights_routes(app, warehouse: AnalysisWarehouse) -> None:
                 traces_by_hypothesis,
                 candidates_by_hypothesis,
                 rejected,
+                _research_section(warehouse, business_id),
             )
         )
 

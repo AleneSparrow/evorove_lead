@@ -1,0 +1,13 @@
+# Proposed opt-in configuration, not the project's active root config.
+# Select this config only after owner approval and a tested database backup.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "deploy/Dockerfile"
+
+[deploy]
+healthcheckPath = "/openapi.json"
+healthcheckTimeout = 100
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 3
+numReplicas = 1
+# No automatic migrations or research schedule in the first rollout.

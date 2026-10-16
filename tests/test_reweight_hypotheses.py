@@ -1,10 +1,10 @@
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 
 from evorove_lead.reweight_hypotheses import (
     MIN_SAMPLE_FOR_RATING,
     compute_rates,
     latest_business_archetype,
-    reweight_hypotheses,
+    reweight_hypotheses as _reweight_hypotheses,
 )
 from evorove_lead.warehouse import (
     BriefRecord,
@@ -16,6 +16,10 @@ from evorove_lead.warehouse import (
 
 NOW = datetime(2026, 9, 12, tzinfo=timezone.utc)
 BIZ = "tenant-a"
+
+
+def reweight_hypotheses(*args, **kwargs):
+    return _reweight_hypotheses(*args, now=NOW + timedelta(days=40), **kwargs)
 
 
 def _hypothesis(hyp_id: str, **overrides) -> HypothesisRecord:
@@ -93,7 +97,8 @@ def test_low_close_rate_pauses_and_zeroes_budget_once_enough_sample():
     warehouse.save_hypothesis(_hypothesis("hyp-1", query_budget=2))
     for i in range(MIN_SAMPLE_FOR_RATING):
         warehouse.save_candidate(_candidate("hyp-1", f"c{i}", "cold"))
-    # No outcomes at all -> close_rate 0.0, well under the pause threshold.
+        warehouse.save_hypothesis_outcome(_outcome("hyp-1", f"case-{i}", "dropped"))
+    # Only explicit mature dropped outcomes justify pausing; missing remains pending.
 
     results = reweight_hypotheses(warehouse, BIZ)
 

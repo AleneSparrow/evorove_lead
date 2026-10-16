@@ -6,12 +6,14 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from evorove_lead.sqlalchemy_models import Base
+from evorove_lead import intelligence_store, research_budget, research_cache, llm_usage, research_delivery  # register metadata
 from evorove_lead.sqlalchemy_warehouse import database_url_from_environment
 
 config = context.config
 if config.config_file_name:
     fileConfig(config.config_file_name)
-config.set_main_option("sqlalchemy.url", database_url_from_environment())
+if config.attributes.get("connection") is None:
+    config.set_main_option("sqlalchemy.url", database_url_from_environment())
 target_metadata = Base.metadata
 
 
@@ -28,6 +30,12 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
+    existing = config.attributes.get("connection")
+    if existing is not None:
+        context.configure(connection=existing, target_metadata=target_metadata, compare_type=True)
+        with context.begin_transaction():
+            context.run_migrations()
+        return
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

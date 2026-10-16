@@ -102,6 +102,7 @@ class CandidateRecord:
     trace_id: str = ""
     email: str = ""
     phone: str = ""
+    rejection_reason: str = ""
 
 
 @dataclass(frozen=True)

@@ -25,7 +25,7 @@ from evorove_lead.warehouse import AnalysisWarehouse, HypothesisRecord
 # one lucky or unlucky case -- wait for enough Cold candidates to trust the
 # close_rate. Also gates when a close_rate is trusted enough to fold into
 # the system-wide, cross-tenant pattern library.
-MIN_SAMPLE_FOR_RATING = 3
+MIN_SAMPLE_FOR_RATING = 30
 CLOSE_RATE_PAUSE_THRESHOLD = 0.1
 CLOSE_RATE_BOOST_THRESHOLD = 0.3
 MIN_QUERY_BUDGET = 0
@@ -107,6 +107,7 @@ def reweight_hypotheses(
     *,
     pattern_library: PatternLibrary | None = None,
     business_archetype: str = "",
+    now=None,
 ) -> tuple[HypothesisReweight, ...]:
     """Recompute and persist accept_rate/close_rate/status/budget for one business.
 
@@ -121,10 +122,12 @@ def reweight_hypotheses(
     results: list[HypothesisReweight] = []
     for hypothesis in warehouse.list_hypotheses(business_id):
         accept_rate, close_rate, sample_size = compute_rates(warehouse, business_id, hypothesis)
+        mature = mature_performance(warehouse, business_id, hypothesis.id, now=now)
+        effective_sample = mature.resolved if mature.cohort_mature and mature.attribution_complete else 0
         new_status, new_budget = _next_status_and_budget(
             current_status=hypothesis.status,
-            close_rate=close_rate,
-            sample_size=sample_size,
+            close_rate=mature.rate if mature.rate is not None else 0,
+            sample_size=effective_sample,
             current_budget=hypothesis.query_budget,
         )
         warehouse.save_hypothesis(
@@ -136,18 +139,6 @@ def reweight_hypotheses(
                 query_budget=new_budget,
             )
         )
-        if (
-            pattern_library is not None
-            and business_archetype.strip()
-            and sample_size >= MIN_SAMPLE_FOR_RATING
-        ):
-            pattern_library.record_observation(
-                business_archetype=business_archetype,
-                channel_family=hypothesis.channel,
-                query_pattern=hypothesis.intent_trigger,
-                close_rate=close_rate,
-                sample_size=sample_size,
-            )
         results.append(
             HypothesisReweight(
                 hypothesis_id=hypothesis.id,
@@ -160,6 +151,8 @@ def reweight_hypotheses(
                 new_budget=new_budget,
             )
         )
+    if pattern_library is not None and business_archetype.strip():
+        publish_mature_patterns(warehouse, business_id, pattern_library, business_archetype, now=now)
     return tuple(results)
 
 
@@ -199,6 +192,84 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"budget {result.previous_budget}->{result.new_budget}"
         )
     return 0
+
+
+
+
+@dataclass(frozen=True)
+class MaturePerformance:
+    cold: int
+    done: int
+    dropped: int
+    pending: int
+    cohort_mature: bool
+    attribution_complete: bool
+
+    @property
+    def resolved(self): return self.done + self.dropped
+
+    @property
+    def rate(self): return self.done / self.resolved if self.resolved else None
+
+
+def mature_performance(warehouse, business_id, hypothesis_id, *, now=None, maturity_days=30):
+    """Reception timestamps only: the external event contract has no occurred_at.
+
+    Keep unresolved cases pending. A cohort is not penalized before its entire
+    observation window closes. Inconsistent counts disable adaptation.
+    """
+    from datetime import datetime, timezone, timedelta
+    now = now or datetime.now(timezone.utc)
+    cold = [c for c in warehouse.list_candidates(business_id, hypothesis_id) if c.decision == "cold"]
+    latest = {}
+    for event in warehouse.list_hypothesis_outcomes(business_id, hypothesis_id):
+        existing = latest.get(event.case_id)
+        if existing is None or event.recorded_at > existing.recorded_at:
+            latest[event.case_id] = event
+    done = sum(e.outcome == "done" for e in latest.values())
+    dropped = sum(e.outcome == "dropped" for e in latest.values())
+    def aware(t): return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    mature = bool(cold) and all(now - aware(c.decided_at) >= timedelta(days=maturity_days) for c in cold)
+    complete = len(latest) <= len(cold)
+    return MaturePerformance(len(cold), done, dropped, max(0, len(cold)-done-dropped), mature, complete)
+
+
+def strategy_feedback(warehouse, store, business_id, *, now=None):
+    """Join immutable per-run hypotheses to stable ICP strategies, never to PII."""
+    totals = {}
+    for link in store.list(business_id, "hypothesis_attribution"):
+        performance = mature_performance(warehouse, business_id, link["hypothesis_id"], now=now)
+        if not performance.cohort_mature or not performance.attribution_complete: continue
+        total = totals.setdefault(link["stable_key"], {"done": 0, "resolved": 0})
+        total["done"] += performance.done
+        total["resolved"] += performance.resolved
+    return totals
+
+
+def publish_mature_patterns(warehouse, business_id, library, archetype, *, now=None):
+    from evorove_lead.evidence import digest
+    groups = {}
+    for hypothesis in warehouse.list_hypotheses(business_id):
+        perf = mature_performance(warehouse, business_id, hypothesis.id, now=now)
+        if not perf.cohort_mature or not perf.attribution_complete: continue
+        key = (hypothesis.channel, hypothesis.intent_trigger)
+        group = groups.setdefault(key, {"done": 0, "resolved": 0})
+        group["done"] += perf.done
+        group["resolved"] += perf.resolved
+    for (channel, trigger), counts in groups.items():
+        if hasattr(warehouse, "database_engine"):
+            from evorove_lead.intelligence_store import IntelligenceStore, ResearchDocumentRow
+            from sqlalchemy import select
+            from sqlalchemy.orm import Session
+            store = IntelligenceStore(warehouse.database_engine)
+            key = digest(archetype + channel + trigger)
+            store.save(business_id, "pattern_contribution", key, {**counts, "archetype": archetype, "channel": channel, "trigger": trigger})
+            # Only anonymized sufficient statistics leave the tenant store.
+            with Session(warehouse.database_engine) as session:
+                values = [row.payload for row in session.scalars(select(ResearchDocumentRow).where(ResearchDocumentRow.kind == "pattern_contribution", ResearchDocumentRow.id == key))]
+            counts = {name: sum(v[name] for v in values) for name in ("done", "resolved")}
+        if counts["resolved"] >= MIN_SAMPLE_FOR_RATING:
+            library.record_observation(business_archetype=archetype, channel_family=channel, query_pattern=trigger, close_rate=counts["done"] / counts["resolved"], sample_size=counts["resolved"])
 
 
 if __name__ == "__main__":

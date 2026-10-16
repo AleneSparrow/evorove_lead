@@ -1,0 +1,49 @@
+# Isolated local pilot only. Never points at an existing application database.
+name: evorove-intelligence-pilot
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: pilot
+      POSTGRES_DB: pilot
+      POSTGRES_HOST_AUTH_METHOD: trust
+    # No published database port; trust is restricted to this disposable network.
+    volumes:
+      - pilot_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "pilot", "-d", "pilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 15
+    mem_limit: 512m
+    cpus: 1
+    restart: "no"
+  pilot:
+    image: evorove-lead-intelligence:pilot
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    environment:
+      DATABASE_URL: postgresql+psycopg://pilot@postgres:5432/pilot
+      WEB_SEARCH_BASE_URL: http://host.docker.internal:8080
+      EVOROVE_CLIENT_ZERO_BUSINESS_ID: evorove-client-zero-local-pilot
+      RESEARCH_ENABLED: "1"
+      RESEARCH_ALLOW_PAID_LLM: "0"
+      RESEARCH_CRM_DELIVERY: "0"
+      AI_PROVIDER: deterministic
+      ANTHROPIC_MODEL: claude-sonnet-4-5
+      RESEARCH_BUDGET_JSON: '{"companies":20,"iterations":3,"queries":10,"pages":60,"llm_calls":24,"input_tokens":60000,"output_tokens":10000,"cost_microusd":1000000,"daily_cost_microusd":3000000}'
+    # No CRM URL, task secret, mailbox, or production credentials.
+    command: ["python", "-m", "evorove_lead.client_zero", "--preflight"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    shm_size: 256m
+    mem_limit: 2g
+    cpus: 2
+    pids_limit: 256
+    restart: "no"
+volumes:
+  pilot_data:

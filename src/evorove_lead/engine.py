@@ -92,7 +92,9 @@ class LeadGenerationEngine:
         pattern_library: PatternLibrary | None = None,
         infer_geo_radius_from_brief: bool = False,
         marketing_analyzer: MarketingAnalyzer | None = None,
+        research_pipeline=None,
     ) -> None:
+        self._research_pipeline = research_pipeline
         self._presence = presence
         self._people_search = people_search or UnconnectedPeopleSearch()
         self._policy = policy or LeadGenerationPolicy()
@@ -116,10 +118,19 @@ class LeadGenerationEngine:
         # None keeps the literal "serves X" audience path. A set analyzer
         # replaces those search audiences with grounded inferences.
         self._marketing_analyzer = marketing_analyzer
+        if self._research_pipeline is None:
+            import os
+            if os.getenv("RESEARCH_ENABLED") == "1":
+                from evorove_lead.research_config import research_pipeline_from_env
+                client = getattr(self._hypothesis_search, "_client", None)
+                if client is not None:
+                    self._research_pipeline = research_pipeline_from_env(self._warehouse, client)
 
     def generate(
         self, seed: BusinessSeed, *, extra_hypotheses: Sequence[Hypothesis] = ()
     ) -> GenerationResult:
+        if self._research_pipeline is not None:
+            return self._research_pipeline.generate(self, seed, extra_hypotheses=extra_hypotheses)
         # `extra_hypotheses` is track 4's hook: a market-signal run appends
         # one ad-hoc, already-built Hypothesis here instead of re-deriving
         # the whole offer/analysis-driven set for a single news event. Empty
@@ -391,7 +402,7 @@ class LeadGenerationEngine:
                     if hypothesis_id:
                         self._warehouse.save_candidate(
                             _rejected_hit_to_candidate_record(
-                                business_id, hypothesis_id, hit, str(exc)
+                                business_id, hypothesis_id, hit, str(exc), trace_id
                             )
                         )
                     continue
@@ -548,7 +559,9 @@ def _accept_hit(hit: PeopleHit, profile: SelectionProfile) -> tuple[Candidate, S
     )
     if not selection.accepted:
         raise CandidateRejected(selection.why)
-    return candidate, selection
+    from evorove_lead.qualification import QualificationGate
+    gate = QualificationGate().evaluate(dna=None, bundle=None, assessment=None, review=None)
+    raise CandidateRejected(gate.codes[0])
 
 
 def _not_seen_before(candidate: Candidate, seen: set[str]) -> None:
@@ -599,7 +612,7 @@ def _candidate_to_record(
 
 
 def _rejected_hit_to_candidate_record(
-    business_id: str, hypothesis_id: str, hit: PeopleHit, why: str
+    business_id: str, hypothesis_id: str, hit: PeopleHit, why: str, trace_id: str = ""
 ) -> CandidateRecord:
     return CandidateRecord(
         id=new_id("candidate"),
@@ -613,5 +626,7 @@ def _rejected_hit_to_candidate_record(
         evidence=0.0,
         addressable=False,
         decision="rejected",
+        rejection_reason=why,
+        trace_id=trace_id,
         decided_at=datetime.now(timezone.utc),
     )

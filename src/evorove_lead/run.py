@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Sequence
@@ -42,6 +43,14 @@ class DepositedPresenceSource:
 def build_engine(materials: Path | None, observations: Path | None) -> LeadGenerationEngine:
     presence = DepositedPresenceSource(materials) if materials else HttpPresenceSource()
     people = OwnerObservationPeopleSearch(observations) if observations else None
+    if os.getenv("RESEARCH_ENABLED") == "1" and observations is None:
+        from evorove_lead.searches import live_engine
+        engine = live_engine()
+        if engine is None:
+            from evorove_lead.market_intelligence import ResearchUnavailable
+            raise ResearchUnavailable("configured search is unavailable")
+        engine._presence = presence
+        return engine
     return LeadGenerationEngine(presence=presence, people_search=people)
 
 

@@ -151,6 +151,7 @@ class CandidateRow(Base):
     business_id = Column(String(128), nullable=False)
     hypothesis_id = Column(String(128), nullable=False)
     trace_id = Column(String(128), nullable=True)
+    rejection_reason = Column(Text, nullable=False, default="")
     identity = Column(Text, nullable=False)
     email = Column(String(320))
     phone = Column(String(64))

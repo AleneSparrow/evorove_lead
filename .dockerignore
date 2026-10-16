@@ -10,3 +10,4 @@ owner-observations/*.jsonl
 # regardless; this only widens what a *plain-text* brief file can be named.
 owner-materials/.env
 owner-materials/.env.*
+pilot-reports/

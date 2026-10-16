@@ -45,7 +45,7 @@ def _engine(search) -> LeadGenerationEngine:  # noqa: ANN001
     return LeadGenerationEngine(presence=FakePresence(), people_search=search)
 
 
-def test_engine_keeps_person_with_reason_tied_to_offer() -> None:
+def test_legacy_reason_without_evidence_cannot_enter_cold() -> None:
     search = FakePeopleSearch(
         (
             PeopleHit(
@@ -59,13 +59,11 @@ def test_engine_keeps_person_with_reason_tied_to_offer() -> None:
 
     result = _engine(search).generate(SEED)
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert result.status is GenerationStatus.NO_FIT
     assert search.calls == 1
     assert result.sent_messages == ()
-    assert len(result.candidates) == 1
-    assert result.candidates[0].identity.startswith("Jordan Lee")
-    assert result.handoffs[0].channel == "email"
-    assert result.handoffs[0].reason_source == "https://directory.example/jordan"
+    assert result.candidates == () and result.handoffs == ()
+    assert result.rejected[0].why == "missing_verified_evidence"
 
 
 def test_engine_drops_contact_dump_without_offer_reason() -> None:
@@ -86,9 +84,9 @@ def test_engine_drops_contact_dump_without_offer_reason() -> None:
 
     result = _engine(search).generate(SEED)
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
-    assert [hit.identity for hit in result.rejected] == ["555-0100"]
-    assert result.candidates[0].identity.startswith("Sam Rivera")
+    assert result.status is GenerationStatus.NO_FIT
+    assert [hit.identity for hit in result.rejected] == ["555-0100", "Sam Rivera, sam@parents.example"]
+    assert result.candidates == () and result.handoffs == ()
     assert result.sent_messages == ()
 
 
@@ -140,7 +138,7 @@ def test_empty_connected_search_is_no_fit_not_a_contact_list() -> None:
     assert result.offer is not None
 
 
-def test_owner_observations_keep_reasoned_people_and_reject_dumps(
+def test_owner_observations_require_evidence_even_with_reason(
     tmp_path,
 ) -> None:
     (tmp_path / "people.jsonl").write_text(
@@ -172,13 +170,11 @@ def test_owner_observations_keep_reasoned_people_and_reject_dumps(
     result = engine.generate(SEED)
 
     assert search.connected is True
-    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert result.status is GenerationStatus.NO_FIT
     assert result.sent_messages == ()
-    assert len(result.candidates) == 1
-    assert result.candidates[0].identity.startswith("Jordan Lee")
-    assert result.handoffs[0].channel == "email"
-    assert result.handoffs[0].reason_source == "owner-copied public post, 2026-09-01"
-    assert [hit.identity for hit in result.rejected] == ["Pat Dump, +15550100999"]
+    assert result.candidates == () and result.handoffs == ()
+    assert [hit.identity for hit in result.rejected] == ["Jordan Lee, jordan@example-bakery.com", "Pat Dump, +15550100999"]
+    assert result.rejected[0].why == "missing_verified_evidence"
 
 
 def test_empty_owner_observations_are_no_fit_not_a_web_directory(
@@ -194,8 +190,8 @@ def test_empty_owner_observations_are_no_fit_not_a_web_directory(
     assert result.offer is not None
 
 
-def test_grounded_email_becomes_a_cold_touch_and_a_blank_reason_is_dropped() -> None:
-    """Cycle 1 hands one Cold touch to CRM and never sends a message."""
+def test_legacy_email_and_blank_reason_both_stay_out_of_cold() -> None:
+    """Old text-only hits cannot satisfy the evidence gate; blank reasons also fail."""
     from evorove_lead.crm_touch import RecordingLeadTouchSink
 
     search = FakePeopleSearch(
@@ -220,18 +216,14 @@ def test_grounded_email_becomes_a_cold_touch_and_a_blank_reason_is_dropped() -> 
         presence=FakePresence(), people_search=search, lead_touch_sink=sink
     ).generate(seed)
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert result.status is GenerationStatus.NO_FIT
     assert result.sent_messages == ()
-    assert [item.identity for item in result.rejected] == ["pat@example-bakery.com"]
-    assert len(sink.published) == 1
-    business_id, payload = sink.published[0]
-    assert business_id == "tenant-a"
-    assert payload["kind"] == "assembled"
-    assert payload["identity"]["email"] == "jordan@example-bakery.com"
-    assert payload["payload"]["reason"] == "Already advertises weekend catering to nearby families."
+    assert [item.why for item in result.rejected] == ["missing_verified_evidence", "reason is required"]
+    assert sink.published == []
+    assert result.handoffs == ()
 
 
-def test_engine_reports_assembled_people_to_crm_sink() -> None:
+def test_engine_does_not_publish_unverified_legacy_people() -> None:
     from evorove_lead.crm_touch import RecordingLeadTouchSink
     from evorove_lead.business import BusinessSeed
 
@@ -251,14 +243,10 @@ def test_engine_reports_assembled_people_to_crm_sink() -> None:
         presence=FakePresence(), people_search=search, lead_touch_sink=sink
     ).generate(seed)
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
-    assert len(sink.published) == 1
-    business_id, payload = sink.published[0]
-    assert business_id == "tenant-a"
-    assert payload["kind"] == "assembled"
-    assert payload["cycle"] == 1
-    assert str(payload["person_id"]).startswith("ppl_")
-    assert result.handoffs[0].person_id == payload["person_id"]
+    assert result.status is GenerationStatus.NO_FIT
+    assert sink.published == []
+    assert result.handoffs == ()
+    assert result.rejected[0].why == "missing_verified_evidence"
 
 
 def test_sink_from_env_needs_url_and_secret(monkeypatch) -> None:
@@ -310,7 +298,7 @@ def test_engine_writes_traces_and_rejections_to_its_own_warehouse_not_crm() -> N
         lead_touch_sink=crm_sink,
     ).generate(seed)
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert result.status is GenerationStatus.NO_FIT
     assert len(warehouse.briefs) == 1
     assert warehouse.briefs[0].business_id == "tenant-a"
     assert len(warehouse.hypotheses) == 1
@@ -318,10 +306,9 @@ def test_engine_writes_traces_and_rejections_to_its_own_warehouse_not_crm() -> N
     assert len(warehouse.traces) == 2
     assert {t.hypothesis_id for t in warehouse.traces} == {hypothesis_id}
     decisions = {c.decision for c in warehouse.candidates}
-    assert decisions == {"cold", "rejected"}
-    # CRM only ever hears about the accepted person, never the rejected one
-    # or the raw trace text -- that stays in this repo's own warehouse.
-    assert len(crm_sink.published) == 1
+    assert decisions == {"rejected"}
+    # Neither unverified person is sent to CRM; traces remain auditable.
+    assert crm_sink.published == []
 
 
 def test_engine_without_business_id_writes_nothing_to_warehouse() -> None:
@@ -343,13 +330,13 @@ def test_engine_without_business_id_writes_nothing_to_warehouse() -> None:
         presence=FakePresence(), people_search=search, warehouse=warehouse
     ).generate(SEED)
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
+    assert result.status is GenerationStatus.NO_FIT
     assert warehouse.briefs == []
     assert warehouse.traces == []
 
 
-def test_engine_runs_the_full_hypothesis_pipeline_to_cold() -> None:
-    """Phase 2 done-when: hypothesis -> query -> trace -> re-analysis -> Cold."""
+def test_legacy_hypothesis_pipeline_preserves_traces_but_requires_evidence() -> None:
+    """Legacy discovery remains auditable but cannot bypass the new gate."""
 
     from evorove_lead.crm_touch import RecordingLeadTouchSink
     from evorove_lead.search import TraceFinding
@@ -407,10 +394,9 @@ def test_engine_runs_the_full_hypothesis_pipeline_to_cold() -> None:
         lead_touch_sink=crm_sink,
     ).generate(seed)
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
-    assert len(result.candidates) == 1
-    assert result.candidates[0].identity == "jordan@example-bakery.com"
-    assert result.handoffs[0].reason_source == "https://forum.example/thread/1"
+    assert result.status is GenerationStatus.NO_FIT
+    assert result.candidates == () and result.handoffs == ()
+    assert result.rejected[0].why == "missing_verified_evidence"
 
     # One brief snapshot, one hypothesis row per built hypothesis (2
     # demographic audiences + 2 B2B business listings + public_ask +
@@ -422,8 +408,8 @@ def test_engine_runs_the_full_hypothesis_pipeline_to_cold() -> None:
     assert "no email address found on the page" in reject_reasons
     assert any("not about" in r for r in reject_reasons)
     decisions = {c.decision for c in warehouse.candidates}
-    assert decisions == {"cold"}
-    assert len(crm_sink.published) == 1
+    assert decisions == {"rejected"}
+    assert crm_sink.published == []
 
 
 def test_engine_runs_an_extra_hypothesis_alongside_the_built_set() -> None:
@@ -475,14 +461,15 @@ def test_engine_runs_an_extra_hypothesis_alongside_the_built_set() -> None:
         lead_touch_sink=RecordingLeadTouchSink(),
     ).generate(seed, extra_hypotheses=(signal_hypothesis,))
 
-    assert result.status is GenerationStatus.PEOPLE_FOUND
-    assert any(c.identity == "planner@example-events.com" for c in result.candidates)
+    assert result.status is GenerationStatus.NO_FIT
+    assert any(c.identity == "planner@example-events.com" for c in result.rejected)
+    assert result.handoffs == ()
     kinds = {h.intent_trigger for h in warehouse.hypotheses}
     assert any(k == "market_signal" for k in kinds)
 
 
-def test_engine_hypothesis_pipeline_puts_hypothesis_id_on_the_handoff_and_crm_touch() -> None:
-    """Phase 3 prerequisite: hypothesis_id must ride the handoff to Cold, not just the warehouse."""
+def test_unverified_hypothesis_candidate_keeps_attribution_without_handoff() -> None:
+    """Unqualified evidence stays in the warehouse with hypothesis attribution."""
 
     from evorove_lead.crm_touch import RecordingLeadTouchSink
     from evorove_lead.search import TraceFinding
@@ -518,13 +505,9 @@ def test_engine_hypothesis_pipeline_puts_hypothesis_id_on_the_handoff_and_crm_to
         lead_touch_sink=crm_sink,
     ).generate(BusinessSeed(site_url=SITE, business_id="tenant-a"))
 
-    assert len(result.handoffs) == 1
-    hypothesis_id = result.handoffs[0].hypothesis_id
-    assert hypothesis_id
-    assert hypothesis_id in {h.id for h in warehouse.hypotheses}
-
-    _, payload = crm_sink.published[0]
-    assert payload["payload"]["hypothesis_id"] == hypothesis_id
+    assert result.handoffs == () and crm_sink.published == []
+    assert warehouse.candidates[0].hypothesis_id in {h.id for h in warehouse.hypotheses}
+    assert warehouse.candidates[0].decision == "rejected"
 
 
 def test_engine_persists_business_archetype_on_the_brief_and_reorders_by_pattern() -> None:

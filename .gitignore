@@ -23,3 +23,4 @@ htmlcov/
 .vscode/
 
 owner-observations/*.jsonl
+pilot-reports/

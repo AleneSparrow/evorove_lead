@@ -184,6 +184,7 @@ def _candidate_to_row(record: CandidateRecord) -> CandidateRow:
         identity=record.identity,
         email=record.email or None,
         phone=record.phone or None,
+        rejection_reason=record.rejection_reason,
         channel=record.channel,
         reason=record.reason,
         reason_source=record.reason_source,
@@ -212,6 +213,7 @@ def _candidate_from_row(row: CandidateRow) -> CandidateRecord:
         trace_id=row.trace_id or "",
         email=row.email or "",
         phone=row.phone or "",
+        rejection_reason=row.rejection_reason or "",
     )
 
 
@@ -241,6 +243,7 @@ class SqlAlchemyAnalysisWarehouse:
     """Tenant-scoped analysis warehouse backed by Postgres (or SQLite in tests)."""
 
     def __init__(self, engine) -> None:
+        self.database_engine = engine
         self._session_factory: sessionmaker[Session] = sessionmaker(
             bind=engine, expire_on_commit=False, future=True
         )

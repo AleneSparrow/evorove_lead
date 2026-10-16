@@ -120,14 +120,14 @@ class _Search:
         )
 
 
-def test_a_person_already_on_the_board_is_not_handed_over_again() -> None:
+def test_repeated_unverified_contact_never_reaches_board() -> None:
     warehouse, sink = RecordingAnalysisWarehouse(), RecordingLeadTouchSink()
     seed = BusinessSeed(site_url="https://heat.example/", business_id="tenant-a")
     engine = LeadGenerationEngine(presence=_Presence(), people_search=_Search(), warehouse=warehouse, lead_touch_sink=sink)
-    assert engine.generate(seed).status is GenerationStatus.PEOPLE_FOUND
+    assert engine.generate(seed).status is GenerationStatus.NO_FIT
     second = engine.generate(seed)
     assert second.status is GenerationStatus.NO_FIT
-    assert second.rejected[0].why == "duplicate contact already handed to the board"
-    assert len(sink.published) == 1
+    assert second.rejected[0].why == "missing_verified_evidence"
+    assert sink.published == []
     kept = [c for c in warehouse.candidates if c.decision == "cold"]
-    assert kept[0].fit == 1.0 and kept[0].evidence == 1.0
+    assert kept == []

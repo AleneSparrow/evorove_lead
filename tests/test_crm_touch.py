@@ -65,3 +65,9 @@ def test_assembled_touch_person_id_is_stable_without_an_upstream_id() -> None:
 
     assert payload["person_id"].startswith("ppl_")
     assert payload["identity"]["phone"] == "5550100"
+
+def test_digits_in_email_are_not_invented_as_phone():
+    from evorove_lead.crm_touch import split_identity
+    name, phone, email = split_identity("person123456789@example.com")
+    assert phone is None
+    assert email == "person123456789@example.com"

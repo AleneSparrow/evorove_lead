@@ -34,7 +34,7 @@ def _run(capsys, *argv: str) -> dict:
     return json.loads(capsys.readouterr().out)
 
 
-def test_run_puts_the_reasoned_person_on_cold_and_rejects_the_dump(dirs, capsys, monkeypatch) -> None:
+def test_run_rejects_unverified_observations_and_dump(dirs, capsys, monkeypatch) -> None:
     materials, observations = dirs
     sink = RecordingLeadTouchSink()
     monkeypatch.setattr("evorove_lead.engine.sink_from_env", lambda: sink)
@@ -47,13 +47,10 @@ def test_run_puts_the_reasoned_person_on_cold_and_rejects_the_dump(dirs, capsys,
         "--observations", str(observations),
     )
 
-    assert summary["status"] == "people_found"
-    assert summary["cold"] == 1
-    assert [item["identity"] for item in summary["rejected"]] == ["Pat Dump, +15550100999"]
-    assert len(sink.published) == 1
-    business_id, payload = sink.published[0]
-    assert business_id == "acme-home-services"
-    assert payload["kind"] == "assembled"
+    assert summary["status"] == "no_fit"
+    assert summary["cold"] == 0
+    assert [item["why"] for item in summary["rejected"]] == ["missing_verified_evidence", "reason is not tied to the offer"]
+    assert sink.published == []
 
 
 def test_run_without_a_people_source_stops_after_the_offer(dirs, capsys) -> None:

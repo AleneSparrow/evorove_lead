@@ -84,7 +84,7 @@ def search_summary(result) -> dict[str, int | str]:
     }
 
 
-def run_client_zero_search() -> dict[str, int | str]:
+def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int | str]:
     search = hypothesis_search_from_env()
     if search is None:
         summary: dict[str, int | str] = {
@@ -95,7 +95,19 @@ def run_client_zero_search() -> dict[str, int | str]:
             "messages_sent": 0,
         }
     else:
+        research = None
+        warehouse = None
+        if research_dry_run:
+            from evorove_lead.sqlalchemy_warehouse import warehouse_from_env
+            from evorove_lead.research_config import research_pipeline_from_env
+            from evorove_lead.market_intelligence import ResearchUnavailable
+            warehouse = warehouse_from_env()
+            research = research_pipeline_from_env(warehouse, search._client, dry_run=True)
+            if research is None:
+                raise ResearchUnavailable("research is not enabled")
         engine = LeadGenerationEngine(
+            research_pipeline=research,
+            warehouse=warehouse,
             presence=client_zero_presence(),
             hypothesis_search=search,
             marketing_analyzer=marketing_analyzer_from_env(),
@@ -111,14 +123,57 @@ def run_client_zero_search() -> dict[str, int | str]:
         summary = search_summary(result)
         if result.sent_messages:
             raise RuntimeError("cycle 1 must not send")
+    if research_dry_run:
+        summary["crm_redelivered"] = 0
+        summary["crm_pending"] = 0
+        if search is not None and research is not None:
+            summary["research_run_id"] = research.last_run["id"]
+            summary["research_status"] = research.last_run["status"]
+            summary["research_stop_reason"] = research.last_run.get("stop_reason", "")
+        return summary
     delivery = flush_crm_deliveries_from_env()
     summary["crm_redelivered"] = delivery["redelivered"]
     summary["crm_pending"] = delivery["pending"]
     return summary
 
 
+def preflight(*, probe_search=False):
+    """Read only nonsecret configuration flags; optionally probe configured SearxNG."""
+    from evorove_lead.web_search import client_from_env
+    report = {
+        "search_configured": bool(os.getenv("WEB_SEARCH_BASE_URL")),
+        "research_enabled": os.getenv("RESEARCH_ENABLED") == "1",
+        "paid_calls_authorized": os.getenv("RESEARCH_ALLOW_PAID_LLM") == "1",
+        "delivery_enabled": os.getenv("RESEARCH_CRM_DELIVERY") == "1",
+        "search_probe": "not_run", "blockers": [],
+    }
+    if not report["search_configured"]: report["blockers"].append("WEB_SEARCH_BASE_URL is not configured")
+    if not report["research_enabled"]: report["blockers"].append("research is not enabled")
+    if not report["paid_calls_authorized"]: report["blockers"].append("paid LLM calls require separate authorization")
+    if probe_search and report["search_configured"]:
+        client = client_from_env()
+        hits = client.search("Evorove public website") if client else ()
+        report["search_probe"] = "results_received" if hits else "empty_or_unavailable"
+        if not hits: report["blockers"].append("search probe did not establish working retrieval")
+    return report
+
+
 def main() -> None:
-    summary = run_client_zero_search()
+    import argparse
+    import json
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--preflight", action="store_true")
+    parser.add_argument("--probe-search", action="store_true")
+    parser.add_argument("--research-dry-run", action="store_true")
+    args = parser.parse_args()
+    if args.preflight:
+        report = preflight(probe_search=args.probe_search)
+        print(json.dumps(report, indent=2))
+        raise SystemExit(2 if report["blockers"] else 0)
+    summary = run_client_zero_search(research_dry_run=args.research_dry_run)
+    if args.research_dry_run:
+        print(json.dumps(summary, indent=2))
+        raise SystemExit(0 if summary.get("research_status") == "completed" else 2)
     print(
         "client_zero status={status} candidates={candidates} "
         "handoffs={handoffs} rejected={rejected} messages_sent={messages_sent} "

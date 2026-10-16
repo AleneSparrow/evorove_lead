@@ -139,6 +139,10 @@ class WebSearchPeopleSearch:
         self._decision_maker_llm = decision_maker_llm
         self.connected = True
 
+    def discover(self, hypothesis: "Hypothesis"):
+        """Evidence pipeline discovery: same search port, defer expensive extraction."""
+        return self._client.search(hypothesis.query_template)
+
     def find(self, hypothesis: "Hypothesis") -> Sequence[TraceFinding]:
         if hypothesis.intent_trigger.kind == "business_listing":
             return self._find_companies(hypothesis)

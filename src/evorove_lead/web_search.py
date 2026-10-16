@@ -141,3 +141,57 @@ def fetch_page_text(url: str, opener=urlopen, host_ok=_host_is_public) -> str:
     html = body.decode("utf-8", errors="replace")
     _, _, body_text = html_to_page_text(html)
     return body_text
+
+
+def fetch_source_snapshot(url: str, business_id: str, subject: str):
+    """Fetch evidence with guarded redirects and explicitly observed publication metadata.
+
+    Search snippets are never substituted for an unavailable page.
+    """
+    import re
+    from datetime import datetime
+    from urllib.request import HTTPRedirectHandler, build_opener
+    from html.parser import HTMLParser
+    from evorove_lead.evidence import SourceSnapshot, utcnow, digest
+
+    class SafeRedirect(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            validate_public_http_url(newurl)
+            if not _host_is_public(urlparse(newurl).hostname or ""):
+                raise PresenceRejected("redirect host is not public")
+            return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+    class Dates(HTMLParser):
+        published = None
+        def handle_starttag(self, tag, attrs):
+            data = dict(attrs)
+            if tag == "meta" and (data.get("property") or data.get("name")) in {"article:published_time", "datePublished"}:
+                try:
+                    value = datetime.fromisoformat((data.get("content") or "").replace("Z", "+00:00"))
+                    if value.tzinfo: self.published = value
+                except ValueError: pass
+
+    validated = validate_public_http_url(url)
+    host = urlparse(validated).hostname or ""
+    if host.endswith("linkedin.com") or ("google" in host and "ads" in validated):
+        raise PresenceRejected("restricted source")
+    if not _host_is_public(host): raise PresenceRejected("source host is not public")
+    try:
+        with build_opener(SafeRedirect()).open(Request(validated, headers={"User-Agent": USER_AGENT}), timeout=FETCH_TIMEOUT_SECONDS) as response:
+            final = validate_public_http_url(response.geturl())
+            body = response.read(MAX_BODY_BYTES + 1)
+            status = response.status
+    except (URLError, TimeoutError, OSError) as exc:
+        raise PresenceRejected("source unavailable") from exc
+    if len(body) > MAX_BODY_BYTES: raise PresenceRejected("source too large")
+    html = body.decode("utf-8", errors="replace")
+    _, _, text = html_to_page_text(html)
+    if len(text.strip()) < 80: raise PresenceRejected("insufficient public text")
+    if re.search(r"sign in to (continue|read)|subscribe to (continue|read)|enable cookies to continue", text, re.I):
+        raise PresenceRejected("access restricted")
+    dates = Dates()
+    dates.feed(html)
+    now = utcnow()
+    return SourceSnapshot(id=digest(final + now.isoformat()), business_id=business_id, url=validated, final_url=final,
+                          content=text[:18000], fetched_at=now, published_at=dates.published, status_code=status,
+                          source_type="first_party", subject=subject)

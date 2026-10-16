@@ -290,7 +290,7 @@ def split_identity(blob: str) -> tuple[str | None, str | None, str | None]:
     if match:
         email = match.group(0).casefold()
         text = f"{text[:match.start()]} {text[match.end():]}"
-    digits = "".join(character for character in blob if character.isdigit())
+    digits = "".join(character for character in text if character.isdigit())
     phone = digits if 7 <= len(digits) <= 15 else None
     name = re.sub(r"[\s,]+", " ", text).strip() or None
     if name and name.isdigit():

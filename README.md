@@ -97,3 +97,19 @@ without them the search still runs and only skips that POST.
   `.env.example`.
 
 Owner-facing contract (Russian): [`docs/cycle-1-contract.md`](docs/cycle-1-contract.md).
+
+## Evidence-driven research
+
+Cycle 1 now includes opt-in Business DNA, retrieved market intelligence, structured
+qualification, independent review, bounded reflection and adaptive budgets. Legacy
+text-only hits cannot enter CRM Cold without the evidence gate. External API and
+CRM delivery contracts are unchanged.
+
+Implementation, verification boundaries and migrations: [implementation report](docs/market-intelligence-implementation-ru.md).
+Controlled Client 0 testing: [runbook](docs/client-zero-intelligence-runbook.md).
+No live-search quality or production-readiness claim is made.
+
+Infrastructure verification and deployment preparation:
+[audit, 10 October 2026](docs/production-readiness-2026-10-10-ru.md) and
+[isolated pilot / deployment commands](docs/deployment-client-zero-ru.md).
+Production deployment, migrations, paid calls and outreach require separate approval.

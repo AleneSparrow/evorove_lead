@@ -185,3 +185,13 @@
 Библиотека паттернов — [`pattern_library.py`](../src/evorove_lead/pattern_library.py) + `sqlalchemy_pattern_library.py`, таблица `hypothesis_pattern_library` (миграция `0003`) — **системная, без `business_id`**. Хранит `business_archetype → channel_family → query_pattern → observed_close_rate_band`, где `query_pattern` — это `intent_trigger.kind` (одно из четырёх известных значений), никогда не буквальный текст `query_template` (тот цитирует формулировки конкретного бизнеса).
 
 `business_archetype` теперь подключён от начала до конца: `BusinessSeed.business_archetype` — явное, непустое по умолчанию, поле, которое задаёт владелец (не выводится кодом из текста — «нет отраслевых веток в коде»). `LeadGenerationEngine` кладёт его в снимок брифа (`briefs.business_archetype`, миграция `0004`) и передаёт в `build_hypotheses(..., pattern_library=, business_archetype=)`, которая переставляет местами уже построенные гипотезы по известному банду для архетипа — это только порядок вызовов коннектора, `fit_score`/`evidence_score` остаются честными нулями до `verify_hypothesis`. `reweight_hypotheses.py` (CLI) больше не требует `--archetype` явно — по умолчанию читает последний непустой архетип из истории брифов этого бизнеса (`latest_business_archetype`) и, если он есть, сам пополняет библиотеку. Явный `--archetype` по-прежнему может его переопределить.
+
+
+## Уточнение реализации от 9 октября 2026
+
+Перед новым CRM Cold обязателен evidence QualificationGate: одной строки reason
+и совпадения слов недостаточно. Legacy hits без dossier сохраняются как отказы.
+Structured market research, bounded reflection, budget и порядок контролируемого
+включения описаны в [implementation report](market-intelligence-implementation-ru.md)
+и [Client 0 runbook](client-zero-intelligence-runbook.md). Внешний lead-touch
+контракт и разделение циклов остаются прежними.
