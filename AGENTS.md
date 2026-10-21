@@ -17,3 +17,11 @@
 - Do not add `SalesStage` or `ProcessState`. Do not implement email/SMS send or a queue of “write to this phone.”
 - Do not train a model, approve knowledge cards, or download pirated books.
 - Keep changes inside the assigned file scope. Run focused tests for changed behavior. Do not weaken tests to accommodate an implementation.
+
+## Cloud agent setup
+
+Unit tests do not need Postgres, SearxNG, or Docker. Docker is not installed in this environment.
+
+The install creates `/opt/evorove-lead-venv`, installs `.[dev]`, and downloads Playwright Chromium (`python -m playwright install --with-deps chromium`). `pytest` on `PATH` is that virtualenv. `tests/test_rendering.py::test_renders_real_javascript_generated_content` fails when the Chromium binary is missing; that is an environment gap, not a product bug.
+
+`python -m evorove_lead.client_zero` exits 2 when `WEB_SEARCH_BASE_URL` is unset and does not search. Do not set that variable, and do not fetch the live site, unless the owner asked for a live run. Do not read or create `.env`.
