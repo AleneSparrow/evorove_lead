@@ -41,6 +41,24 @@ _LOCALITY_RE = re.compile(
 _NOT_A_PLACE = frozenset({"cold", "done"})
 
 
+def _is_not_a_place(locality: str, body: str) -> bool:
+    """A feature name or an acronym is not a city.
+
+    "Cold" and "Done" are this product's board words. An all-caps token of
+    three or more letters ("CRM") is an acronym, not a place name. A
+    title-case word that the same page also shouts in all caps is the same
+    feature, written both ways. A real city ("Austin") is neither.
+    """
+
+    if locality.casefold() in _NOT_A_PLACE:
+        return True
+    tokens = locality.split()
+    if any(len(token) >= 3 and token.isupper() for token in tokens):
+        return True
+    shouted = {word for word in re.findall(r"\b[A-Z]{3,}\b", body)}
+    return any(token.upper() in shouted for token in tokens)
+
+
 def infer_geo_radius(materials: Sequence[DepositedMaterial]) -> GeoRadius:
     """The first capitalized "in/near/serving/based in/located in <Place>" hit.
 
@@ -51,7 +69,7 @@ def infer_geo_radius(materials: Sequence[DepositedMaterial]) -> GeoRadius:
     for material in materials:
         for match in _LOCALITY_RE.finditer(material.body):
             locality = match.group(1).strip()
-            if locality.casefold() in _NOT_A_PLACE:
+            if _is_not_a_place(locality, material.body):
                 continue
             state = match.group(2)
             return GeoRadius(locality=f"{locality}, {state}" if state else locality)

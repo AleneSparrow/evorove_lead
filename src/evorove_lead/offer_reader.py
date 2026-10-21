@@ -60,6 +60,12 @@ _WORD_RE = re.compile(r"[A-Za-z']+")
 _NEGATION_LOOKBACK_WORDS = 5
 
 
+def _inside_parentheses(chunk: str, index: int) -> bool:
+    """"(for an offline service)" explains a contrast. It does not name an audience."""
+
+    return chunk[:index].count("(") > chunk[:index].count(")")
+
+
 def _is_negated_before(chunk: str, match_start: int) -> bool:
     preceding_words = _WORD_RE.findall(chunk[:match_start])[-_NEGATION_LOOKBACK_WORDS:]
     return any(word.casefold() in _NEGATION_WORDS for word in preceding_words)
@@ -83,6 +89,10 @@ def _is_shouting(text: str) -> bool:
 
 
 _MIN_SERVICE_LINE_WORDS = 4
+# A descriptive sentence, not a heading. Used only after every short line
+# was a shout, a question, or a slogan -- a marketing page's hero is often
+# all of those, and the service is a later sentence in the body.
+_MIN_DESCRIPTIVE_SENTENCE_WORDS = 8
 # A real heading or tagline is short. `page_material` puts each heading and
 # the page <title> on its own line *before* the full page body -- but that
 # final body line is the page's whole running text, long enough that it
@@ -90,6 +100,101 @@ _MIN_SERVICE_LINE_WORDS = 4
 # heading-length keeps this fallback inside the heading/title lines it is
 # meant for, instead of spilling into that body blob.
 _MAX_SERVICE_LINE_CHARS = 120
+_INTERROGATIVES = frozenset(
+    {"what", "how", "when", "why", "who", "where", "which", "can", "do", "does", "did", "is", "are", "will", "would"}
+)
+_CTA_START = frozenset(
+    {
+        "subscribe", "start", "click", "sign", "join", "buy", "get", "see",
+        "watch", "learn", "try", "open", "book", "call", "download", "shop",
+    }
+)
+_COPULA = frozenset({"is", "are", "was", "were", "am", "be", "been", "being"})
+_COPULA_SLOGAN_MAX_WORDS = 12
+
+
+def _sentences(text: str) -> list[str]:
+    return [part.strip(" -") for part in re.split(r"[.?!]+", text) if part.strip(" -")]
+
+
+def _is_question_heading(text: str) -> bool:
+    """A heading that asks something is an FAQ label, not the service name."""
+
+    if "?" in text:
+        return True
+    words = _WORD_RE.findall(text)
+    return bool(words) and words[0].casefold() in _INTERROGATIVES
+
+
+def _is_copula_slogan(text: str) -> bool:
+    """A short line whose only job is "is/are" is a tagline, not a service name.
+
+    "Every move toward Done is visible" is a tagline. A passage with a comma
+    or a colon ("what you sell, who it is for") is a description that happens
+    to use "is", and stays usable as evidence.
+    """
+
+    if any(mark in text for mark in ",:;"):
+        return False
+    words = [word.casefold() for word in _WORD_RE.findall(text)]
+    return bool(_COPULA.intersection(words)) and len(words) <= _COPULA_SLOGAN_MAX_WORDS
+
+
+def _is_cta_slogan(text: str) -> bool:
+    """An imperative stack ("Subscribe. Then the board fills itself.") is a button, not the offer."""
+
+    sentences = _sentences(text)
+    if not sentences:
+        return False
+    first = _WORD_RE.findall(sentences[0])
+    if not first or first[0].casefold() not in _CTA_START:
+        return False
+    return all(len(_WORD_RE.findall(sentence)) <= _MIN_DESCRIPTIVE_SENTENCE_WORDS for sentence in sentences)
+
+
+def is_unusable_as_marketing_fact(text: str) -> bool:
+    """Slogan, shout, or question: not a product fact and not evidence for one.
+
+    Shared by the literal reader and the marketing analyzer so a model
+    quote of the hero line is dropped the same way a heading is skipped.
+    A long descriptive sentence that merely contains "is" stays usable.
+    """
+
+    stripped = (text or "").strip()
+    if not stripped:
+        return True
+    if _is_question_heading(stripped) or _is_shouting(stripped):
+        return True
+    if _is_cta_slogan(stripped) or _is_copula_slogan(stripped):
+        return True
+    return False
+
+
+def _service_line(body: str) -> str:
+    """The first line that names a service, else the first descriptive sentence.
+
+    Headings win when they are ordinary noun phrases ("Weekend catering for
+    local events"). A page whose headings are only a shout, a question, or
+    a slogan falls through to a later sentence in the body instead of
+    quoting the hero.
+    """
+
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
+    for text in lines:
+        if len(text) > _MAX_SERVICE_LINE_CHARS:
+            continue
+        if is_unusable_as_marketing_fact(text):
+            continue
+        if len(_WORD_RE.findall(text)) < _MIN_SERVICE_LINE_WORDS:
+            continue
+        return text
+    for sentence in _sentences("\n".join(lines)):
+        if is_unusable_as_marketing_fact(sentence):
+            continue
+        if len(_WORD_RE.findall(sentence)) < _MIN_DESCRIPTIVE_SENTENCE_WORDS:
+            continue
+        return sentence
+    return _first_line(body)
 
 
 def _first_line(body: str) -> str:
@@ -157,7 +262,11 @@ def _audience_phrases(body: str) -> tuple[str, ...]:
                 continue
             if _is_negated_before(chunk, match.start()):
                 continue
+            if _inside_parentheses(chunk, match.start()):
+                continue
             if _is_generic_filler(phrase):
+                continue
+            if is_unusable_as_marketing_fact(phrase):
                 continue
             seen.add(key)
             found.append(phrase)
@@ -190,7 +299,7 @@ def read_offer(
     audience_keys: set[str] = set()
 
     for material in materials:
-        heading = _service_phrase(_first_line(material.body))
+        heading = _service_phrase(_service_line(material.body))
         if heading:
             key = heading.casefold()
             if key not in sold_keys:

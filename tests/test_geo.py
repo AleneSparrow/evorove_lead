@@ -60,6 +60,34 @@ def test_own_board_vocabulary_is_not_read_as_a_locality():
     assert radius.locality == "Austin"
 
 
+def test_an_acronym_is_not_a_city():
+    """"in CRM" is an acronym, not a locality. A later real city still counts."""
+
+    radius = infer_geo_radius(
+        (_material("If they fit, they land in CRM on Cold. Based in Austin since 2015."),)
+    )
+    assert radius.locality == "Austin"
+
+
+def test_only_an_acronym_and_a_board_word_means_the_whole_us():
+    radius = infer_geo_radius((_material("They land in CRM on Cold."),))
+    assert radius.locality == ""
+    assert radius.country == "US"
+
+
+def test_a_word_the_page_also_shouts_is_not_a_city():
+    """A title-case word that the same page writes in all caps is a feature name.
+
+    "North" is not on a board-word list. It is skipped because the page
+    shouts NORTH, and the search continues to a real city.
+    """
+
+    radius = infer_geo_radius(
+        (_material("NORTH SIDE SPECIALS. We cook in North all week. Based in Austin."),)
+    )
+    assert radius.locality == "Austin"
+
+
 def test_checks_materials_in_order_and_stops_at_first_hit():
     radius = infer_geo_radius(
         (

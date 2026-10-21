@@ -30,6 +30,7 @@ from evorove_lead.hypothesis import (
 )
 from evorove_lead.materials import DepositedMaterial
 from evorove_lead.offer import OfferRejected, OfferUnderstanding, _ground
+from evorove_lead.offer_reader import is_unusable_as_marketing_fact
 from evorove_lead.pattern_library import PatternLibrary
 
 SEARCH_CHANNELS = ("forums", "industry_sites", "news", "business_listing")
@@ -53,6 +54,8 @@ The object has:
 
 The label is your inference of the buyer of THIS offer. It does not have to appear verbatim.
 evidence_quote and every 4P quote must be copied verbatim from the named source.
+Do not quote a shouted tagline, a button label, or a question. Those are not facts about the offer.
+Prefer a declarative sentence that says what is sold, and a passage that says who would buy it.
 When the materials distinguish the buyer from that buyer's own customers, label the buyer.
 channel is where that buyer can be found on the public web.
 """
@@ -350,6 +353,8 @@ def _fact_or_none(value: object, by_name: dict[str, DepositedMaterial]) -> Quote
     source_name = str(value.get("source_name") or "").strip()
     if not quote or len(quote) > _MAX_QUOTE_CHARS:
         return None
+    if is_unusable_as_marketing_fact(quote):
+        return None
     if not _is_grounded(quote, source_name, by_name):
         return None
     return QuotedFact(quote=quote, source_name=source_name)
@@ -367,6 +372,8 @@ def _segment_or_none(value: object, by_name: dict[str, DepositedMaterial]) -> Au
     if channel not in SEARCH_CHANNELS:
         return None
     if not evidence_quote or len(evidence_quote) > _MAX_QUOTE_CHARS:
+        return None
+    if is_unusable_as_marketing_fact(evidence_quote):
         return None
     if not _is_grounded(evidence_quote, source_name, by_name):
         return None
