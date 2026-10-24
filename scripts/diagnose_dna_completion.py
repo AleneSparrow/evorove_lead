@@ -15,10 +15,16 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+from pydantic import ValidationError
 from evorove_lead.business import BusinessSeed
 from evorove_lead.business_dna import BusinessDNA, BusinessDNAModelDraft
 from evorove_lead.client_zero import CLIENT_ZERO_SITE, client_zero_presence
 from evorove_lead.evidence import SourceSnapshot, digest, utcnow
+from evorove_lead.market_intelligence import (
+    safe_runtime_reason,
+    safe_validation_summary,
+    validate_supplied_sources,
+)
 from evorove_lead.presence import HttpPresenceSource, PresenceRejected
 from evorove_lead.web_search import fetch_source_snapshot
 
@@ -108,6 +114,40 @@ def json_valid_for_dna(text: str) -> bool:
     except Exception:
         return False
     return True
+
+
+def full_dna_validation(text: str, *, business_id: str, site_url: str, sources: tuple[SourceSnapshot, ...]) -> dict:
+    report = {
+        "json_valid": False,
+        "assemble_valid": False,
+        "grounding_valid": False,
+        "validation": None,
+        "grounding_error": None,
+    }
+    try:
+        draft = BusinessDNAModelDraft.model_validate_json(strip_fences(text))
+        report["json_valid"] = True
+    except ValidationError as exc:
+        report["validation"] = safe_validation_summary(exc, "BusinessDNAModelDraft")
+        return report
+    try:
+        dna = draft.assemble(sources)
+        report["assemble_valid"] = True
+    except ValidationError as exc:
+        report["validation"] = safe_validation_summary(exc, "BusinessDNA")
+        return report
+    try:
+        version = BusinessDNA.version_for("\n".join(source.content_hash for source in sources))
+        if dna.business_id != business_id or dna.site_url != site_url or dna.version != version:
+            raise ValueError("DNA identity mismatch")
+        dna.validate_grounding()
+        validate_supplied_sources(dna.evidence, sources)
+        report["grounding_valid"] = True
+    except ValidationError as exc:
+        report["validation"] = safe_validation_summary(exc, "EvidenceBundle")
+    except ValueError as exc:
+        report["grounding_error"] = safe_runtime_reason(exc)
+    return report
 
 
 def cost_usd(input_tokens: int | None, output_tokens: int | None, rates: tuple[float, float]) -> float | None:
@@ -245,6 +285,9 @@ def run(args: argparse.Namespace, *, opener=urlopen, environ=os.environ, load_so
     report = diagnose_response(status, body, max_tokens=args.max_tokens, effort=args.effort)
     report["input_bound_bytes"] = len(system.encode()) + len(user.encode()) + 1024
     report["source_count"] = len(sources)
+    text = text_from_content(body or {})
+    if text:
+        report.update(full_dna_validation(text, business_id=args.business_id, site_url=args.site_url, sources=sources))
     return report
 
 

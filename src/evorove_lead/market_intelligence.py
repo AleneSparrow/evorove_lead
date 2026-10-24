@@ -1,8 +1,9 @@
 """Bounded, evidence-led market research through existing search and completion ports."""
 from __future__ import annotations
 import json
+import re
 from typing import Literal, Protocol, TypeVar
-from pydantic import Field
+from pydantic import Field, ValidationError
 from evorove_lead.evidence import ClaimId, StrictModel, SourceSnapshot, EvidenceBundle, EvidenceClaim, EvidenceDraft, digest, utcnow
 from evorove_lead.business_dna import BusinessDNA, BusinessDNAModelDraft
 
@@ -16,6 +17,74 @@ class TruncatedStructuredCompletion(ResearchUnavailable):
     def __init__(self, metrics: dict):
         super().__init__("truncated structured completion")
         self.metrics = metrics
+
+
+_SAFE_LOC = re.compile(r"[A-Za-z0-9_.-]{1,64}$")
+_SAFE_ERR_TYPE = re.compile(r"[a-z0-9_.]{1,64}$")
+_SAFE_SCHEMA = re.compile(r"[A-Za-z][A-Za-z0-9_]{0,63}$")
+_SAFE_VALUE_REASONS = {
+    "cross-tenant DNA",
+    "US service geography must be grounded",
+    "service locality must be grounded",
+    "service, geography and price must be sourced",
+    "DNA identity mismatch",
+    "model changed or invented a source",
+}
+_SAFE_CLAIM_FIELD = re.compile(
+    r"^unknown DNA claim in (services|problems|value_proposition|business_model|geography|"
+    r"customer_categories|positioning|differentiation|pricing|buying_constraints|exclusions)$"
+)
+
+
+def safe_validation_summary(exc: ValidationError, schema: str) -> dict:
+    name = schema if isinstance(schema, str) and _SAFE_SCHEMA.fullmatch(schema) else "Model"
+    errors = []
+    for item in exc.errors():
+        loc = []
+        for part in item.get("loc", ()):
+            if isinstance(part, int) and 0 <= part < 10_000:
+                loc.append(part)
+            elif isinstance(part, str) and _SAFE_LOC.fullmatch(part):
+                loc.append(part)
+            else:
+                loc.append("field")
+        typ = item.get("type")
+        errors.append({
+            "loc": loc,
+            "type": typ if isinstance(typ, str) and _SAFE_ERR_TYPE.fullmatch(typ) else "error",
+        })
+        if len(errors) >= 20:
+            break
+    return {"schema": name, "error_count": len(exc.errors()), "errors": errors}
+
+
+def format_validation_stop_reason(summary: dict) -> str:
+    return f"ValidationError {summary.get('schema', 'Model')} errors={summary.get('error_count', 0)}"[:200]
+
+
+def safe_runtime_reason(exc: BaseException) -> str:
+    if type(exc).__name__ == "OfferRejected":
+        return "OfferRejected"
+    text = str(exc).strip()
+    if text in _SAFE_VALUE_REASONS or _SAFE_CLAIM_FIELD.fullmatch(text):
+        return text
+    return type(exc).__name__
+
+
+class InvalidStructuredCompletion(ResearchUnavailable):
+    def __init__(self, summary: dict):
+        super().__init__(format_validation_stop_reason(summary))
+        self.summary = summary
+
+
+def _decode_model_text(raw: str) -> str:
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[1] if "\n" in text else ""
+        if text.rstrip().endswith("```"):
+            text = text.rstrip()[:-3].strip()
+    return text
+
 
 class StructuredReasoner:
     """No tools or credentials are exposed to the model. All web text is data."""
@@ -31,13 +100,15 @@ class StructuredReasoner:
             "A quote must entail the claim, not merely mention a keyword. Unknown is acceptable. "
             f"Task: {stage}. Schema: {json.dumps(schema.model_json_schema())}"
         )
-        raw = self.completion.complete(system=system, user=json.dumps(data, ensure_ascii=False))
-        text = raw.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else ""
-            if text.rstrip().endswith("```"):
-                text = text.rstrip()[:-3].strip()
-        return schema.model_validate_json(text)
+        user = json.dumps(data, ensure_ascii=False)
+        try:
+            return schema.model_validate_json(_decode_model_text(self.completion.complete(system=system, user=user)))
+        except ValidationError as first:
+            repair = json.dumps({"previous_output_invalid": True, "validation": safe_validation_summary(first, schema.__name__), "data": data}, ensure_ascii=False)
+            try:
+                return schema.model_validate_json(_decode_model_text(self.completion.complete(system=system, user=repair)))
+            except ValidationError as second:
+                raise InvalidStructuredCompletion(safe_validation_summary(second, schema.__name__)) from None
 
 class ResearchQuestions(StrictModel):
     queries: tuple[str, ...] = Field(min_length=1, max_length=4)
@@ -133,7 +204,10 @@ class BusinessDNAEngine:
     def analyze(self, business_id: str, site_url: str, sources: tuple[SourceSnapshot, ...]) -> BusinessDNA:
         version = BusinessDNA.version_for("\n".join(s.content_hash for s in sources))
         draft = self.reasoner.ask("Understand the business. Each claim has slots naming the DNA fields it supports. Preserve supplied version and tenant.", BusinessDNAModelDraft, dict(business_id=business_id, site_url=site_url, version=version, sources=[s.model_dump(mode="json") for s in sources]))
-        dna = draft.assemble(sources)
+        try:
+            dna = draft.assemble(sources)
+        except ValidationError as exc:
+            raise InvalidStructuredCompletion(safe_validation_summary(exc, "BusinessDNA")) from None
         if dna.business_id != business_id or dna.site_url != site_url or dna.version != version:
             raise ValueError("DNA identity mismatch")
         dna.validate_grounding()

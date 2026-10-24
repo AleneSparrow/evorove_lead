@@ -1,3 +1,4 @@
+import json
 import pytest
 from sqlalchemy import create_engine, select, func, event
 from sqlalchemy.orm import Session
@@ -193,6 +194,72 @@ def test_insights_report_real_run_status_without_inventing_metrics(tmp_path):
     assert "Dry run" in html and "1 qualified" in html
     assert "QUALIFIED" in html
     assert _research_section(engine._warehouse, "other") == ""
+
+
+def test_schema_validation_before_search_is_failed_not_no_fit(tmp_path):
+    from evorove_lead.engine import GenerationStatus
+    from evorove_lead.llm_usage import CompletionReply, UsageRow
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    class InvalidDNA(Completion):
+        def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
+            if "Understand the business" in system:
+                return CompletionReply('{"schema_version": 1, "secret": "LEAKED_VALUE"}', 10, 4)
+            return super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    pipeline.completion = InvalidDNA()
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert result.status is GenerationStatus.FAILED
+    assert result.status is not GenerationStatus.NO_FIT
+    assert result.stop_reason.startswith("ValidationError BusinessDNAModelDraft")
+    assert pipeline.last_run["status"] == "failed"
+    assert pipeline.last_run["failed_stage"] == "business_analysis"
+    assert pipeline.last_run["usage"]["queries"] == 0
+    assert pipeline.last_run["usage"]["llm_calls"] == 2
+    assert pipeline.last_run["validation"]["schema"] == "BusinessDNAModelDraft"
+    assert pipeline.last_run["validation"]["error_count"] >= 1
+    dumped = json.dumps(pipeline.last_run)
+    assert "LEAKED_VALUE" not in dumped
+    with Session(db) as session:
+        rows = [row.payload for row in session.scalars(select(UsageRow))]
+    assert any(row.get("status") == "validation_failed" for row in rows)
+    assert "LEAKED_VALUE" not in json.dumps(rows)
+    assert pipeline.client.queries == []
+    assert not crm.accepted and store.pending_count() == 0
+
+
+def test_invented_quote_is_still_rejected_and_not_no_fit(tmp_path):
+    from evorove_lead.engine import GenerationStatus
+    from evorove_lead.llm_usage import CompletionReply
+
+    class InventedQuote(Completion):
+        def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
+            if "Understand the business" in system:
+                data = json.loads(user) if "previous_output_invalid" not in user else json.loads(user)["data"]
+                source_id = data["sources"][0]["id"]
+                claim = {
+                    "id": "svc", "subject": "a", "predicate": "offers", "text": "invented offer",
+                    "assertion_type": "BUSINESS_CLAIM", "confidence": 0.8,
+                    "confidence_reason": "model invention",
+                    "sources": [{"source_id": source_id, "quote": "INVENTED_QUOTE_SECRET", "relationship": "supports"}],
+                    "slots": ["service", "geography", "customer_category"],
+                }
+                body = {"business_id": data["business_id"], "site_url": data["site_url"], "version": data["version"],
+                        "service_country": "US", "evidence": {"business_id": data["business_id"], "subject": "a", "claims": [claim]}}
+                return CompletionReply(json.dumps(body), 20, 20)
+            return super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    pipeline.completion = InventedQuote()
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert result.status is GenerationStatus.FAILED
+    assert result.status is not GenerationStatus.NO_FIT
+    assert result.stop_reason.startswith("ValidationError BusinessDNA")
+    assert pipeline.last_run["usage"]["llm_calls"] == 1
+    assert "INVENTED_QUOTE_SECRET" not in json.dumps(pipeline.last_run)
+    assert pipeline.client.queries == []
 
 
 def test_qualification_uses_qualify_effort_other_stages_stay_low(tmp_path):

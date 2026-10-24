@@ -220,3 +220,45 @@ def test_missing_key_and_transport_errors_stay_generic(capsys):
 def test_max_tokens_bounds(value):
     with pytest.raises(SystemExit):
         diagnose.parse_args(["--max-tokens", value])
+
+
+def test_full_dna_path_reports_assemble_errors_without_values():
+    source = _source()
+    empty = diagnose.full_dna_validation(
+        _valid_dna_json(), business_id="client-zero", site_url="https://evorove.com", sources=(source,))
+    assert empty["json_valid"] is True
+    assert empty["assemble_valid"] is False
+    assert empty["grounding_valid"] is False
+    assert empty["validation"]["schema"] == "BusinessDNA"
+    assert empty["validation"]["error_count"] >= 1
+    assert all(set(item) == {"loc", "type"} for item in empty["validation"]["errors"])
+    assert PAGE_MARK not in json.dumps(empty)
+
+    invented = {
+        "schema_version": 1,
+        "business_id": "client-zero",
+        "version": BusinessDNA.version_for(source.content_hash),
+        "site_url": "https://evorove.com",
+        "service_country": "US",
+        "evidence": {
+            "business_id": "client-zero",
+            "subject": "client-zero",
+            "claims": [{
+                "id": "svc",
+                "subject": "client-zero",
+                "predicate": "offers",
+                "text": "invented",
+                "assertion_type": "BUSINESS_CLAIM",
+                "confidence": 0.8,
+                "confidence_reason": "model invention",
+                "sources": [{"source_id": "src_home", "quote": "INVENTED_QUOTE_SECRET", "relationship": "supports"}],
+                "slots": ["service", "geography", "customer_category"],
+            }],
+        },
+    }
+    bound = diagnose.full_dna_validation(
+        json.dumps(invented), business_id="client-zero", site_url="https://evorove.com", sources=(source,))
+    assert bound["json_valid"] is True
+    assert bound["assemble_valid"] is False
+    assert "INVENTED_QUOTE_SECRET" not in json.dumps(bound)
+    assert PAGE_MARK not in json.dumps(bound)

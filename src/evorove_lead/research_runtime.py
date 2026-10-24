@@ -9,7 +9,11 @@ from collections import Counter
 from pydantic import ValidationError
 from evorove_lead.business_dna import BusinessDNA
 from evorove_lead.evidence import EvidenceBundle, EvidenceDraft, SourceSnapshot, digest, utcnow, company_key
-from evorove_lead.market_intelligence import BusinessDNAEngine, MarketResearchEngine, MarketIntelligenceReport, StructuredReasoner, ResearchUnavailable, validate_supplied_sources
+from evorove_lead.market_intelligence import (
+    BusinessDNAEngine, MarketResearchEngine, MarketIntelligenceReport, StructuredReasoner,
+    ResearchUnavailable, InvalidStructuredCompletion, validate_supplied_sources,
+    safe_validation_summary, format_validation_stop_reason, safe_runtime_reason,
+)
 from evorove_lead.search_planner import ICPHypothesisEngine, SearchPlanner, buyer_queries_for, is_buyer_query
 from evorove_lead.qualification import LeadQualificationEngine, AdversarialValidation, QualificationGate, Decision
 from evorove_lead.opportunity_ranking import CommercialOpportunityRanker
@@ -324,14 +328,28 @@ class ResearchPipeline:
         except ResearchUnavailable as exc:
             failed_stage = state["stages"][-1] if state["stages"] else "business_analysis"
             reason = str(exc).strip()[:200] or "ResearchUnavailable"
+            if isinstance(exc, InvalidStructuredCompletion):
+                self.ledger.record(seed.business_id, run_id, {"status": "validation_failed", **exc.summary})
+                state["validation"] = exc.summary
             if failed_stage == "business_analysis" or not state.get("usage", {}).get("queries", 0):
                 state["status"], state["stop_reason"] = "failed", reason
             else:
                 state["status"], state["stop_reason"] = "insufficient_evidence", reason
             state["failed_stage"] = failed_stage
         except (OfferRejected, ValidationError, ValueError) as exc:
-            state["status"], state["stop_reason"] = "insufficient_evidence", type(exc).__name__
-            state["failed_stage"] = state["stages"][-1]
+            failed_stage = state["stages"][-1] if state["stages"] else "business_analysis"
+            if isinstance(exc, ValidationError):
+                summary = safe_validation_summary(exc, getattr(exc, "title", None) or "Model")
+                self.ledger.record(seed.business_id, run_id, {"status": "validation_failed", **summary})
+                state["validation"] = summary
+                reason = format_validation_stop_reason(summary)
+            else:
+                reason = safe_runtime_reason(exc)
+            if failed_stage == "business_analysis" or not state.get("usage", {}).get("queries", 0):
+                state["status"], state["stop_reason"] = "failed", reason
+            else:
+                state["status"], state["stop_reason"] = "insufficient_evidence", reason
+            state["failed_stage"] = failed_stage
         except BaseException as exc:
             state["status"], state["stop_reason"] = ("failed", "dependency_failure") if isinstance(exc, Exception) else ("interrupted", "cancelled")
             raise
