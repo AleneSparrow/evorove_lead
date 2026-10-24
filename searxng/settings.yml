@@ -2,6 +2,23 @@
 # The only things web_search.py actually needs: JSON output enabled, and
 # the rate limiter off (it's meant to block scraping bots -- our own
 # connector, querying its own local instance, is not one).
+#
+# Image used by docker-compose: searxng/searxng:latest
+# (live instance probed 2026-10-24: 2026.9.13+96479fff6).
+# Engine policy is checked against that image's default settings.yml:
+#   https://github.com/searxng/searxng/blob/master/searx/settings.yml
+#   https://docs.searxng.org/admin/settings/settings_engines.html
+#   https://docs.searxng.org/admin/settings/settings_outgoing.html
+#
+# No-key general engines we turn on: bing, yahoo, qwant. Brave stays on
+# as a reserve (default). Google CSE is already on and was the only
+# engine that answered on the client-zero dry-run.
+#
+# Not enabled, on purpose:
+#   startpage, mojeek — inactive upstream; Anubis/POW captcha, heavy CPU
+#   marginalia, braveapi — require an API key
+#   google — disabled upstream; sorry/CAPTCHA from datacenter IPs
+#   wikipedia, wikidata — 429/timeout on every probe in this environment
 use_default_settings: true
 
 general:
@@ -11,9 +28,41 @@ search:
   formats:
     - html
     - json
+  default_lang: "en"
 
 server:
   # Local pilot only. Generate a real secret_key before exposing this
   # instance beyond localhost -- do not reuse this value in production.
   secret_key: "local_development_only_change_before_any_real_deployment"
   limiter: false
+
+outgoing:
+  request_timeout: 5.0
+  max_request_timeout: 10.0
+  retries: 1
+
+engines:
+  - name: bing
+    disabled: false
+    timeout: 5.0
+    retries: 1
+    retry_on_http_error: [429, 500, 502, 503, 504]
+  - name: yahoo
+    disabled: false
+    timeout: 5.0
+    retries: 1
+    retry_on_http_error: [429, 500, 502, 503, 504]
+  - name: qwant
+    disabled: false
+    timeout: 5.0
+    retries: 1
+    retry_on_http_error: [429, 500, 502, 503, 504]
+  - name: brave
+    disabled: false
+    timeout: 5.0
+    retries: 1
+    retry_on_http_error: [429]
+  - name: wikipedia
+    disabled: true
+  - name: wikidata
+    disabled: true

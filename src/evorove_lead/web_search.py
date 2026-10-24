@@ -95,8 +95,9 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
     failures = payload.get("unresponsive_engines", [])
     if not isinstance(failures, list):
         raise SearchError("search_invalid_structure")
-    if failures:
-        raise SearchError("search_sources_unresponsive", hits=hits)
+    if failures and not hits:
+        # Partial engine failure with zero hits is not "no results".
+        raise SearchError("search_sources_unresponsive", retryable=True, retry_after=1.0)
     return tuple(hits)
 
 

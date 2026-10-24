@@ -118,7 +118,9 @@ def test_actual_adapter_through_pipeline_and_api_preserves_outcome(tmp_path, mon
             raise TimeoutError()
         if query == "market demand evidence":
             return response([{"url": "https://market.example/news", "content": "market evidence"}])
-        return response([] if kind == "empty" else [HIT], **({"unresponsive_engines": [["engine", "timeout"]]} if kind == "partial" else {}))
+        if kind == "partial":
+            return response([], unresponsive_engines=[["engine", "timeout"]])
+        return response([] if kind == "empty" else [HIT])
     pipeline.client = HttpSearxngWebSearchClient("http://localhost", opener, max_requests=1 if kind == "limit" else 30)
     monkeypatch.setenv("INTERNAL_TASK_SECRET", "synthetic")
     targets = InMemorySearchTargetStore()
@@ -129,7 +131,7 @@ def test_actual_adapter_through_pipeline_and_api_preserves_outcome(tmp_path, mon
     outcome = client.get("/api/v1/internal/searches/a", headers=headers).json()
     assert outcome["status"] == expected
     assert targets.get("a").last_status != "running"
-    assert outcome["cold"] == (1 if kind == "partial" else 0)
+    assert outcome["cold"] == 0
     if kind != "empty":
         reason = {"partial": "search_sources_unresponsive", "failed": "search_timeout", "limit": "search_request_limit"}[kind]
         assert outcome["stop_reason"] == pipeline.last_run["stop_reason"] == reason
@@ -143,7 +145,7 @@ def test_actual_adapter_through_pipeline_and_api_preserves_outcome(tmp_path, mon
         assert "stop_reason" not in outcome
         assert pipeline.store.list("a", "strategy_observation")[0]["qualified"] == 0
     assert delivery.pending_count() == 0
-    assert len(crm.accepted) == (1 if kind == "partial" else 0)
+    assert len(crm.accepted) == 0
     if kind == "failed":
         assert len(requests) == 2
     db.dispose()
@@ -216,6 +218,41 @@ def test_retry_after_wait_and_run_budget_bound_attempts():
     with pytest.raises(SearchError):
         search.search("need")
     assert waits == [] and search.budget.used["queries"] == 1
+
+
+def test_hits_are_kept_when_some_engines_fail():
+    client = HttpSearxngWebSearchClient(
+        "http://localhost",
+        lambda *a, **kw: response([HIT], unresponsive_engines=[["duckduckgo", "CAPTCHA"], ["brave", "too many requests"]]),
+    )
+    hits = client.search("need")
+    assert [hit.url for hit in hits] == [HIT["url"]]
+    assert client.search("need")[0].url == HIT["url"]
+    assert client.requests == 1
+
+
+def test_empty_unresponsive_is_not_empty_success_and_retries_once():
+    calls, waits = [], []
+
+    def opener(*a, **kw):
+        calls.append(1)
+        return response([], unresponsive_engines=[["brave", "too many requests"], ["duckduckgo", "CAPTCHA"]])
+
+    client = HttpSearxngWebSearchClient("http://localhost", opener)
+    with pytest.raises(SearchError, match="search_sources_unresponsive") as raised:
+        client.search("need")
+    assert raised.value.hits == ()
+    assert raised.value.retryable is True
+    assert not client._cache
+    assert len(calls) == 1
+    budget = ResearchBudget("a")
+    search = BudgetedSearch(HttpSearxngWebSearchClient("http://localhost", opener), budget, sleeper=waits.append)
+    with pytest.raises(SearchError, match="search_sources_unresponsive"):
+        search.search("need")
+    assert len(calls) == 3
+    assert len(waits) == 1
+    assert waits[0] > 0
+    assert [error.code for error in search.errors] == ["search_sources_unresponsive"]
 
 
 def test_oversized_response_and_source_failure_are_not_success_cache():
