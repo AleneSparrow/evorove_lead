@@ -5,10 +5,10 @@ from __future__ import annotations
 import ipaddress
 import socket
 from html.parser import HTMLParser
-from typing import Protocol
+from typing import Callable, Protocol
 from urllib.error import URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, Request, build_opener, urlopen
 
 from evorove_lead.business import BusinessSeed
 from evorove_lead.materials import DepositedMaterial
@@ -16,6 +16,14 @@ from evorove_lead.materials import DepositedMaterial
 MAX_BODY_BYTES = 1_000_000
 FETCH_TIMEOUT_SECONDS = 10
 USER_AGENT = "EvoroveLead/0.1 (cycle-1 business presence)"
+METADATA_HOSTS = frozenset(
+    {
+        "metadata",
+        "metadata.google.internal",
+        "metadata.internal",
+        "metadata.goog",
+    }
+)
 
 
 class PresenceRejected(ValueError):
@@ -137,21 +145,46 @@ def validate_public_http_url(url: str) -> str:
     if parsed.username or parsed.password:
         raise PresenceRejected("site URL must not contain credentials")
     host = (parsed.hostname or "").lower()
-    if not host or host == "localhost" or host.endswith(".local"):
+    if (
+        not host
+        or host == "localhost"
+        or host.endswith(".local")
+        or host.endswith(".internal")
+        or host in METADATA_HOSTS
+    ):
         raise PresenceRejected("site URL host is not a public site")
+    if _blocked_ip(_ip_from_host(host)):
+        raise PresenceRejected("site URL host is not a public site")
+    return raw
+
+
+def _ip_from_host(host: str):
+    """Parse a hostname as an IP, including decimal, hex, octal, and short IPv4."""
+
     try:
-        parsed_ip = ipaddress.ip_address(host)
+        return ipaddress.ip_address(host)
     except ValueError:
-        parsed_ip = None
-    if parsed_ip is not None and (
+        pass
+    try:
+        return ipaddress.IPv4Address(socket.inet_aton(host))
+    except (OSError, ValueError):
+        return None
+
+
+def _blocked_ip(parsed_ip) -> bool:
+    if parsed_ip is None:
+        return False
+    mapped = getattr(parsed_ip, "ipv4_mapped", None)
+    if mapped is not None:
+        parsed_ip = mapped
+    return (
         parsed_ip.is_private
         or parsed_ip.is_loopback
         or parsed_ip.is_link_local
         or parsed_ip.is_reserved
         or parsed_ip.is_multicast
-    ):
-        raise PresenceRejected("site URL host is not a public site")
-    return raw
+        or parsed_ip.is_unspecified
+    )
 
 
 def _host_is_public(host: str) -> bool:
@@ -159,23 +192,51 @@ def _host_is_public(host: str) -> bool:
         infos = socket.getaddrinfo(host, None)
     except OSError as exc:
         raise PresenceRejected("site URL host could not be resolved") from exc
+    seen = False
     for info in infos:
         sockaddr = info[4]
         if not sockaddr:
             continue
-        try:
-            parsed_ip = ipaddress.ip_address(sockaddr[0])
-        except ValueError:
+        parsed_ip = _ip_from_host(sockaddr[0])
+        if parsed_ip is None:
             continue
-        if (
-            parsed_ip.is_private
-            or parsed_ip.is_loopback
-            or parsed_ip.is_link_local
-            or parsed_ip.is_reserved
-            or parsed_ip.is_multicast
-        ):
+        seen = True
+        if _blocked_ip(parsed_ip):
             return False
-    return True
+    return seen
+
+
+def require_public_http_url(url: str, host_ok: Callable[[str], bool] | None = None) -> str:
+    """Reject credentials, non-http(s), private, loopback, and metadata targets.
+
+    Used by the owner-site fetch, evidence fetch, result-page fetch, and the
+    Playwright fallback. A custom `host_ok` is for tests; production resolves
+    the hostname and refuses any private address in the set.
+    """
+
+    validated = validate_public_http_url(url)
+    checker = host_ok or _host_is_public
+    host = urlparse(validated).hostname or ""
+    if not checker(host):
+        raise PresenceRejected("site URL host is not a public site")
+    return validated
+
+
+class PublicRedirectHandler(HTTPRedirectHandler):
+    """Refuse a hop the moment it leaves the public internet."""
+
+    def __init__(self, host_ok: Callable[[str], bool] | None = None) -> None:
+        super().__init__()
+        self.host_ok = host_ok or _host_is_public
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        require_public_http_url(newurl, host_ok=self.host_ok)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def public_urlopen(host_ok: Callable[[str], bool] | None = None):
+    opener = build_opener(PublicRedirectHandler(host_ok=host_ok or _host_is_public))
+    return opener.open
 
 
 # A client-rendered SPA serves a near-empty `<div id="root"></div>` shell
@@ -216,10 +277,7 @@ class HttpPresenceSource:
         self._min_plain_fetch_text_chars = min_plain_fetch_text_chars
 
     def load(self, seed: BusinessSeed) -> tuple[DepositedMaterial, ...]:
-        url = validate_public_http_url(seed.site_url)
-        host = urlparse(url).hostname or ""
-        if not self._host_ok(host):
-            raise PresenceRejected("site URL host is not a public site")
+        url = require_public_http_url(seed.site_url, host_ok=self._host_ok)
 
         material = page_material(url, self._fetch(url))
         if len(material.body) < self._min_plain_fetch_text_chars:
@@ -233,11 +291,13 @@ class HttpPresenceSource:
     def _fetch(self, url: str) -> str:
         request = Request(url, headers={"User-Agent": USER_AGENT})
         try:
-            with self._opener(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
+            opener = self._opener if self._opener is not urlopen else public_urlopen(self._host_ok)
+            with opener(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
                 final_url = getattr(response, "geturl", lambda: url)()
-                if urlparse(final_url).scheme not in {"http", "https"}:
-                    raise PresenceRejected("site redirected off http(s)")
+                require_public_http_url(final_url, host_ok=self._host_ok)
                 body = response.read(MAX_BODY_BYTES + 1)
+        except PresenceRejected:
+            raise
         except (URLError, TimeoutError, OSError) as exc:
             raise PresenceRejected("owner site could not be read") from exc
         if len(body) > MAX_BODY_BYTES:

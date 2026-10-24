@@ -24,6 +24,10 @@ def test_rejects_non_http_and_credential_urls() -> None:
         validate_public_http_url("https://localhost/")
     with pytest.raises(PresenceRejected, match="public site"):
         validate_public_http_url("http://127.0.0.1/")
+    with pytest.raises(PresenceRejected, match="public site"):
+        validate_public_http_url("http://169.254.169.254/latest/meta-data")
+    with pytest.raises(PresenceRejected, match="public site"):
+        validate_public_http_url("http://metadata.google.internal/")
 
 
 def test_page_material_keeps_heading_quote() -> None:

@@ -22,9 +22,11 @@ from evorove_lead.presence import (
     MAX_BODY_BYTES,
     USER_AGENT,
     PresenceRejected,
+    PublicRedirectHandler,
     _host_is_public,
     html_to_page_text,
-    validate_public_http_url,
+    public_urlopen,
+    require_public_http_url,
 )
 
 SEARCH_TIMEOUT_SECONDS = 10
@@ -166,17 +168,16 @@ def client_from_env(*, required=False) -> WebSearchClient | None:
 def fetch_page_text(url: str, opener=urlopen, host_ok=_host_is_public) -> str:
     """Fetch a public http(s) page's visible text. Same SSRF guard as `presence.py`."""
 
-    validated = validate_public_http_url(url)
-    host = urlparse(validated).hostname or ""
-    if not host_ok(host):
-        raise PresenceRejected("result URL host is not a public site")
+    validated = require_public_http_url(url, host_ok=host_ok)
     request = Request(validated, headers={"User-Agent": USER_AGENT})
     try:
-        with opener(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
+        transport = opener if opener is not urlopen else public_urlopen(host_ok)
+        with transport(request, timeout=FETCH_TIMEOUT_SECONDS) as response:
             final_url = getattr(response, "geturl", lambda: validated)()
-            if urlparse(final_url).scheme not in {"http", "https"}:
-                raise PresenceRejected("result redirected off http(s)")
+            require_public_http_url(final_url, host_ok=host_ok)
             body = response.read(MAX_BODY_BYTES + 1)
+    except PresenceRejected:
+        raise
     except (URLError, TimeoutError, OSError) as exc:
         raise PresenceRejected("result page could not be read") from exc
     if len(body) > MAX_BODY_BYTES:
@@ -193,16 +194,9 @@ def fetch_source_snapshot(url: str, business_id: str, subject: str):
     """
     import re
     from datetime import datetime
-    from urllib.request import HTTPRedirectHandler, build_opener
+    from urllib.request import build_opener
     from html.parser import HTMLParser
     from evorove_lead.evidence import SourceSnapshot, utcnow, digest
-
-    class SafeRedirect(HTTPRedirectHandler):
-        def redirect_request(self, req, fp, code, msg, headers, newurl):
-            validate_public_http_url(newurl)
-            if not _host_is_public(urlparse(newurl).hostname or ""):
-                raise PresenceRejected("redirect host is not public")
-            return super().redirect_request(req, fp, code, msg, headers, newurl)
 
     class Dates(HTMLParser):
         published = None
@@ -214,14 +208,13 @@ def fetch_source_snapshot(url: str, business_id: str, subject: str):
                     if value.tzinfo: self.published = value
                 except ValueError: pass
 
-    validated = validate_public_http_url(url)
+    validated = require_public_http_url(url)
     host = urlparse(validated).hostname or ""
     if host.endswith("linkedin.com") or ("google" in host and "ads" in validated):
         raise PresenceRejected("restricted source")
-    if not _host_is_public(host): raise PresenceRejected("source host is not public")
     try:
-        with build_opener(SafeRedirect()).open(Request(validated, headers={"User-Agent": USER_AGENT}), timeout=FETCH_TIMEOUT_SECONDS) as response:
-            final = validate_public_http_url(response.geturl())
+        with build_opener(PublicRedirectHandler()).open(Request(validated, headers={"User-Agent": USER_AGENT}), timeout=FETCH_TIMEOUT_SECONDS) as response:
+            final = require_public_http_url(response.geturl())
             body = response.read(MAX_BODY_BYTES + 1)
             status = response.status
     except (URLError, TimeoutError, OSError) as exc:
