@@ -29,12 +29,13 @@ class LLMUsageLedger:
             session.add(UsageRow(business_id=business_id, id=new_id("usage"), run_id=run_id, payload=payload, recorded_at=utcnow()))
 
 class BudgetedCompletion:
-    def __init__(self, completion, budget, ledger, run_id, *, max_output_tokens=2000,
-                 input_usd_per_million=3., output_usd_per_million=15., model="configured", pricing_version="2026-10-09"):
+    def __init__(self, completion, budget, ledger, run_id, *, max_output_tokens=4000,
+                 input_usd_per_million=3., output_usd_per_million=15., model="configured", pricing_version="2026-10-09",
+                 effort="low"):
         self.completion, self.budget, self.ledger, self.run_id = completion, budget, ledger, run_id
         self.max_output_tokens = max_output_tokens
         self.input_rate, self.output_rate = input_usd_per_million, output_usd_per_million
-        self.model, self.pricing_version = model, pricing_version
+        self.model, self.pricing_version, self.effort = model, pricing_version, effort
         if min(self.input_rate, self.output_rate) < 0: raise ValueError("negative rate")
 
     def complete(self, *, system, user):
@@ -48,7 +49,7 @@ class BudgetedCompletion:
         self.ledger.record(self.budget.business_id, self.run_id, event)
         try:
             from evorove_lead.run_ownership import guarded_call
-            reply = guarded_call(self.completion.complete_bounded, system=system, user=user, max_tokens=self.max_output_tokens)
+            reply = guarded_call(self.completion.complete_bounded, system=system, user=user, max_tokens=self.max_output_tokens, effort=self.effort)
             actual = dict(input_tokens=reply.input_tokens, output_tokens=reply.output_tokens,
                           cost_microusd=ceil(reply.input_tokens*self.input_rate + reply.output_tokens*self.output_rate))
             if min(reply.input_tokens, reply.output_tokens) < 0: raise ValueError("invalid provider usage")
@@ -56,6 +57,10 @@ class BudgetedCompletion:
             self.ledger.record(self.budget.business_id, self.run_id, {**event, "status": "completed", "usage": actual, "invoice_cost": None})
             self.budget.check_time()
             return reply.text
-        except Exception:
-            self.ledger.record(self.budget.business_id, self.run_id, {**event, "status": "failed_or_unknown"})
+        except Exception as exc:
+            from evorove_lead.market_intelligence import TruncatedStructuredCompletion
+            if isinstance(exc, TruncatedStructuredCompletion):
+                self.ledger.record(self.budget.business_id, self.run_id, {**event, "status": "truncated", **exc.metrics})
+            else:
+                self.ledger.record(self.budget.business_id, self.run_id, {**event, "status": "failed_or_unknown"})
             raise

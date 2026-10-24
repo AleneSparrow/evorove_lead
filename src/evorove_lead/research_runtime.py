@@ -34,7 +34,9 @@ from evorove_lead.crm_touch import assembled_touch, stable_person_id, RecordingL
 
 class ResearchPipeline:
     def __init__(self, db_engine, search_client, completion, *, limits=None, fetcher=None,
-                 clock=utcnow, dry_run=True, model="configured", max_output_tokens=2000, input_rate=3., output_rate=15.):
+                 clock=utcnow, dry_run=True, model="configured", max_output_tokens=4000, input_rate=3., output_rate=15.,
+                 effort="low", qualify_effort="medium"):
+        from evorove_lead.research_config import require_research_effort
         self.store = IntelligenceStore(db_engine)
         self.cache = ResearchCache(db_engine, clock)
         self.delivery = ResearchDelivery(db_engine)
@@ -44,6 +46,9 @@ class ResearchPipeline:
         self.limits, self.clock, self.dry_run = limits or BudgetLimits(), clock, dry_run
         self.model, self.max_output_tokens = model, max_output_tokens
         self.input_rate, self.output_rate = input_rate, output_rate
+        # low can weaken candidate judgment. Qualification stays on medium.
+        self.effort = require_research_effort(effort, name="effort")
+        self.qualify_effort = require_research_effort(qualify_effort, name="qualify_effort")
         self.last_run = None
 
     def generate(self, engine, seed, *, extra_hypotheses=()):
@@ -65,7 +70,11 @@ class ResearchPipeline:
         def stage(name): state["stages"].append(name); save()
         def record_usage(usage): state["usage"] = usage; save()
         budget = ResearchBudget(seed.business_id, self.limits, daily_store=self.daily, clock=self.clock, recorder=record_usage)
-        reasoner = StructuredReasoner(BudgetedCompletion(self.completion, budget, self.ledger, run_id, model=self.model, max_output_tokens=self.max_output_tokens, input_usd_per_million=self.input_rate, output_usd_per_million=self.output_rate))
+        budgeted = dict(completion=self.completion, budget=budget, ledger=self.ledger, run_id=run_id, model=self.model,
+                        max_output_tokens=self.max_output_tokens, input_usd_per_million=self.input_rate,
+                        output_usd_per_million=self.output_rate)
+        reasoner = StructuredReasoner(BudgetedCompletion(**budgeted, effort=self.effort))
+        qualify_reasoner = StructuredReasoner(BudgetedCompletion(**budgeted, effort=self.qualify_effort))
         search = BudgetedSearch(self.client, budget)
         offer = None
         accepted, handoffs, rejected = [], [], []
@@ -248,9 +257,9 @@ class ResearchPipeline:
                                 stage("adversarial_review")
                                 review = AdversarialReview.model_validate(cached_review["review"])
                             else:
-                                assessment = LeadQualificationEngine(reasoner).qualify(dna, h, bundle, market=market)
+                                assessment = LeadQualificationEngine(qualify_reasoner).qualify(dna, h, bundle, market=market)
                                 stage("adversarial_review")
-                                review = AdversarialValidation(reasoner).review(dna, h, bundle, assessment, market=market)
+                                review = AdversarialValidation(qualify_reasoner).review(dna, h, bundle, assessment, market=market)
                                 self.cache.put(seed.business_id, review_key, {"assessment": assessment.model_dump(mode="json"), "review": review.model_dump(mode="json")}, timedelta(days=1))
                             # Additional evidence is collected only inside the same run budget.
                             if review.additional_queries:
@@ -265,8 +274,8 @@ class ResearchPipeline:
                                     bundle = draft.bind(extra)
                                     validate_supplied_sources(bundle, extra)
                                     self.store.save_evidence(bundle)
-                                    assessment = LeadQualificationEngine(reasoner).qualify(dna, h, bundle, market=market)
-                                    review = AdversarialValidation(reasoner).review(dna, h, bundle, assessment, market=market)
+                                    assessment = LeadQualificationEngine(qualify_reasoner).qualify(dna, h, bundle, market=market)
+                                    review = AdversarialValidation(qualify_reasoner).review(dna, h, bundle, assessment, market=market)
                             stage("qualification_gate")
                             identity = bundle.contact.identity if bundle.contact else ""
                             gate = QualificationGate().evaluate(dna=dna, bundle=bundle, assessment=assessment, review=review, duplicate=self.delivery.seen(seed.business_id, identity), now=self.clock(), research_remaining=(budget.used["iterations"] < self.limits.iterations and query_count < allocation[h.stable_key]))

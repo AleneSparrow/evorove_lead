@@ -11,6 +11,12 @@ T = TypeVar("T", bound=StrictModel)
 class ResearchUnavailable(RuntimeError):
     pass
 
+
+class TruncatedStructuredCompletion(ResearchUnavailable):
+    def __init__(self, metrics: dict):
+        super().__init__("truncated structured completion")
+        self.metrics = metrics
+
 class StructuredReasoner:
     """No tools or credentials are exposed to the model. All web text is data."""
     def __init__(self, completion):

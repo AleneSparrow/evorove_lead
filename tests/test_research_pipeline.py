@@ -90,11 +90,11 @@ def test_reflection_revises_empty_search_then_qualifies(tmp_path):
                 return ()
             return super().search(query)
     class ReflectingCompletion(Completion):
-        def complete_bounded(self, *, system, user, max_tokens):
+        def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
             if "Task: Analyze failed research" in system:
                 data = json.loads(user)
                 return CompletionReply(json.dumps({"cause": "query too narrow", "evidence": [data["history"][-1]["observation_id"]], "justified": True, "revised_queries": ["published intake request US"], "explanation": "search an explicit problem statement"}), 1000, 100)
-            return super().complete_bounded(system=system, user=user, max_tokens=max_tokens)
+            return super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
     db, pipeline, engine, crm, store = setup_pipeline(tmp_path)
     pipeline.client = RetrySearch()
     pipeline.completion = ReflectingCompletion()
@@ -193,3 +193,24 @@ def test_insights_report_real_run_status_without_inventing_metrics(tmp_path):
     assert "Dry run" in html and "1 qualified" in html
     assert "QUALIFIED" in html
     assert _research_section(engine._warehouse, "other") == ""
+
+
+def test_qualification_uses_qualify_effort_other_stages_stay_low(tmp_path):
+    class Recording(Completion):
+        def __init__(self):
+            super().__init__()
+            self.efforts = []
+        def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
+            task = system.split("Task: ", 1)[1].split(". Schema:", 1)[0]
+            self.efforts.append((task, effort))
+            return super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    recorder = Recording()
+    pipeline.completion = recorder
+    engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    by_prefix = {task.split(".", 1)[0]: effort for task, effort in recorder.efforts}
+    assert by_prefix["Understand the business"] == "low"
+    assert by_prefix["Plan research questions about demand, alternatives and barriers for this business"] == "low"
+    assert by_prefix["Extract claims and a real appropriate person from the supplied sources"] == "low"
+    assert by_prefix["Assess six independent dimensions"] == "medium"
+    assert by_prefix["Independently challenge qualification"] == "medium"

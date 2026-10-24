@@ -22,10 +22,10 @@ class MarketAwareCompletion(Completion):
         super().__init__()
         self.inputs = []
 
-    def complete_bounded(self, *, system, user, max_tokens):
+    def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
         data = json.loads(user)
         self.inputs.append((system, data))
-        reply = super().complete_bounded(system=system, user=user, max_tokens=max_tokens)
+        reply = super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
         if "Task: Name buyers" in system:
             market = data["market"]
             claim = market["evidence"]["claims"][0]

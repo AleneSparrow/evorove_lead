@@ -37,7 +37,7 @@ def evidence(data, *, contact=False):
 
 class Completion:
     def __init__(self, contradiction=False): self.calls = []; self.contradiction = contradiction
-    def complete_bounded(self, *, system, user, max_tokens):
+    def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
         data = json.loads(user)
         task = system.split("Task: ", 1)[1].split(". Schema:", 1)[0]
         self.calls.append(task)
