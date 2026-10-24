@@ -61,6 +61,8 @@ class ResearchBudget:
         self._lock = Lock()
 
     def check_time(self):
+        from evorove_lead.run_ownership import check_ownership
+        check_ownership()
         if self.clock() >= self.started_at + timedelta(seconds=self.limits.seconds):
             raise BudgetExhausted("deadline")
 
@@ -88,9 +90,33 @@ class ResearchBudget:
             if self.recorder: self.recorder(dict(self.used))
 
 class BudgetedSearch:
-    def __init__(self, client, budget): self.client, self.budget = client, budget
+    """At most two attempts; each attempt reserves a query before I/O."""
+    def __init__(self, client, budget, *, sleeper=None):
+        import time
+        self.client, self.budget = client, budget
+        self.sleeper = sleeper or time.sleep
+        self.errors, self.successes = [], 0
+
     def search(self, query):
-        self.budget.consume(queries=1)
-        result = self.client.search(query)
-        self.budget.check_time()
-        return result
+        from evorove_lead.web_search import SearchError
+        for attempt in range(2):
+            self.budget.consume(queries=1)
+            try:
+                result = self.client.search(query)
+            except SearchError as exc:
+                # Never retry partial source failures or permanent responses.
+                delay = exc.retry_after if exc.retry_after is not None else .1
+                if exc.retryable and attempt == 0 and delay <= 2 and self.budget.used["queries"] < self.budget.limits.queries:
+                    self.budget.check_time()
+                    from datetime import timedelta
+                    if self.budget.clock() + timedelta(seconds=delay) < self.budget.started_at + timedelta(seconds=self.budget.limits.seconds):
+                        self.sleeper(delay)
+                        continue
+                self.errors.append(exc)
+                if exc.hits:
+                    self.successes += 1
+                    return exc.hits
+                raise
+            self.budget.check_time()
+            self.successes += 1
+            return result

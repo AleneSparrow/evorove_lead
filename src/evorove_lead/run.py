@@ -55,12 +55,16 @@ def build_engine(materials: Path | None, observations: Path | None) -> LeadGener
 
 
 def summarize(result: GenerationResult) -> dict[str, object]:
-    return {
+    summary = {
         "status": result.status.value,
         "offer_understood": result.offer is not None,
         "cold": len(result.handoffs),
         "rejected": [{"identity": hit.identity, "why": hit.why} for hit in result.rejected],
     }
+
+    if result.stop_reason:
+        summary["stop_reason"] = result.stop_reason
+    return summary
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -72,7 +76,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--observations", type=Path, help="owner-deposited JSONL people (stub source)")
     args = parser.parse_args(argv)
 
-    engine = build_engine(args.materials, args.observations)
+    from evorove_lead.web_search import SearchError
+    try:
+        engine = build_engine(args.materials, args.observations)
+    except SearchError as exc:
+        print(json.dumps({"status": "failed", "stop_reason": exc.code}))
+        return 2
     result = engine.generate(
         BusinessSeed(
             site_url=args.site_url,
@@ -86,7 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     summary["crm_pending"] = delivery["pending"]
     json.dump(summary, sys.stdout)
     sys.stdout.write("\n")
-    return 0
+    return 2 if result.status.value in {"failed", "partial", "budget_exhausted"} else 0
 
 
 if __name__ == "__main__":

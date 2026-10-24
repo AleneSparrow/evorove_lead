@@ -9,6 +9,8 @@ news URL is never re-evaluated for a business that already saw it.
 
 from __future__ import annotations
 
+from evorove_lead.run_ownership import guarded_call, check_ownership
+
 import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -110,7 +112,7 @@ def discover_unseen_signals(
 
     query = market_news_query(business_archetype)
     return tuple(
-        hit for hit in client.search(query) if not store.seen(business_id, hit.url)
+        hit for hit in guarded_call(client.search, query) if not store.seen(business_id, hit.url)
     )
 
 
@@ -162,7 +164,8 @@ def check_signals_for_business(
     checked_at = now or datetime.now(timezone.utc)
     hypotheses: list[Hypothesis] = []
     for hit in discover_unseen_signals(business_id, business_archetype, client, store):
-        accepted = evaluate_signal(hit.snippet, business_archetype, llm)
+        accepted = guarded_call(evaluate_signal, hit.snippet, business_archetype, llm)
+        check_ownership()
         store.record(
             MarketSignalRecord(
                 business_id=business_id,

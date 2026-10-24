@@ -33,9 +33,12 @@ class ICPHypothesisEngine:
     def __init__(self, reasoner):
         self.reasoner = reasoner
 
-    def generate(self, dna):
-        result = self.reasoner.ask("Name buyers who would say this problem in public. supporting_claims are DNA claim ids. Do not write survey questions.", HypothesisSet, {"dna": dna.model_dump(mode="json")})
+    def generate(self, dna, *, market=None):
+        result = self.reasoner.ask("Name buyers who would say this problem in public. supporting_claims are supplied DNA or market claim ids. Market conclusions guide buyer hypotheses, never establish a particular prospect's need. Do not write survey questions.", HypothesisSet, {"dna": dna.model_dump(mode="json"), "market": market.model_dump(mode="json") if market is not None else None})
         claims = {c.id for c in dna.evidence.claims}
+        if market is not None:
+            market.validate_grounding(dna.business_id, market.evidence.sources)
+            claims.update(c.id for c in market.evidence.claims)
         if any(not set(h.supporting_claims) <= claims for h in result.hypotheses):
             raise ValueError("hypothesis references invented evidence")
         # Confidence is a ranking hint, never purchase probability or gate input.

@@ -143,8 +143,15 @@ class MarketResearchEngine:
         questions = self.reasoner.ask("Plan research questions about demand, alternatives and barriers for this business.", ResearchQuestions, {"dna": dna.model_dump(mode="json"), "unverified_research_hints": list(research_hints)})
         sources = []
         seen = set()
-        for query in questions.queries:
-            for hit in self.search_client.search(query):
+        from evorove_lead.web_search import SearchError
+        failure = None
+        for query in dict.fromkeys(questions.queries):
+            try:
+                hits = self.search_client.search(query)
+            except SearchError as exc:
+                failure = exc
+                continue
+            for hit in hits:
                 if hit.url in seen:
                     continue
                 seen.add(hit.url)
@@ -152,6 +159,8 @@ class MarketResearchEngine:
                 if source is not None:
                     sources.append(source)
         if not sources:
+            if failure is not None:
+                raise failure
             raise ResearchUnavailable("market research returned no retrieved evidence")
         draft = self.reasoner.ask("Interpret retrieved market evidence. Each claim has slots for the conclusions it supports. Priorities are research suggestions, not facts.", MarketReportModelDraft, {"dna": dna.model_dump(mode="json"), "sources": [s.model_dump(mode="json") for s in sources]})
         report = draft.assemble(tuple(sources))

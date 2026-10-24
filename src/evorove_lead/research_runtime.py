@@ -9,8 +9,8 @@ from collections import Counter
 from pydantic import ValidationError
 from evorove_lead.business_dna import BusinessDNA
 from evorove_lead.evidence import EvidenceBundle, EvidenceDraft, SourceSnapshot, digest, utcnow, company_key
-from evorove_lead.market_intelligence import BusinessDNAEngine, StructuredReasoner, ResearchUnavailable, validate_supplied_sources
-from evorove_lead.search_planner import ICPHypothesisEngine, SearchPlanner, buyer_queries_for, buyer_queries_from_dna, is_buyer_query
+from evorove_lead.market_intelligence import BusinessDNAEngine, MarketResearchEngine, MarketIntelligenceReport, StructuredReasoner, ResearchUnavailable, validate_supplied_sources
+from evorove_lead.search_planner import ICPHypothesisEngine, SearchPlanner, buyer_queries_for, is_buyer_query
 from evorove_lead.qualification import LeadQualificationEngine, AdversarialValidation, QualificationGate, Decision
 from evorove_lead.opportunity_ranking import CommercialOpportunityRanker
 from evorove_lead.research_budget import ResearchBudget, BudgetLimits, BudgetedSearch, DailyBudgetStore, BudgetExhausted
@@ -18,9 +18,10 @@ from evorove_lead.research_cache import ResearchCache
 from evorove_lead.research_reflection import ResearchReflectionLoop
 from evorove_lead.adaptive_search import AdaptiveSearchPlanner, StrategyObservation
 from evorove_lead.research_delivery import ResearchDelivery
+from evorove_lead.run_ownership import CURRENT, OwnershipLost, check_ownership, guarded_call
 from evorove_lead.intelligence_store import IntelligenceStore
 from evorove_lead.llm_usage import BudgetedCompletion, LLMUsageLedger
-from evorove_lead.web_search import fetch_source_snapshot
+from evorove_lead.web_search import fetch_source_snapshot, SearchError
 from evorove_lead.web_people_search import WebSearchPeopleSearch
 from evorove_lead.presence import PresenceRejected
 from evorove_lead.platforms import is_platform
@@ -32,14 +33,14 @@ from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.crm_touch import assembled_touch, stable_person_id, RecordingLeadTouchSink, OutboxCrmLeadTouchSink
 
 class ResearchPipeline:
-    def __init__(self, db_engine, search_client, completion, *, limits=None, fetcher=fetch_source_snapshot,
+    def __init__(self, db_engine, search_client, completion, *, limits=None, fetcher=None,
                  clock=utcnow, dry_run=True, model="configured", max_output_tokens=2000, input_rate=3., output_rate=15.):
         self.store = IntelligenceStore(db_engine)
         self.cache = ResearchCache(db_engine, clock)
         self.delivery = ResearchDelivery(db_engine)
         self.daily = DailyBudgetStore(db_engine)
         self.ledger = LLMUsageLedger(db_engine)
-        self.client, self.completion, self.fetcher = search_client, completion, fetcher
+        self.client, self.completion, self.fetcher = search_client, completion, fetcher or fetch_source_snapshot
         self.limits, self.clock, self.dry_run = limits or BudgetLimits(), clock, dry_run
         self.model, self.max_output_tokens = model, max_output_tokens
         self.input_rate, self.output_rate = input_rate, output_rate
@@ -53,10 +54,11 @@ class ResearchPipeline:
             raise ResearchUnavailable("live admission requires the existing outbox CRM sink")
         if getattr(engine._warehouse, "database_engine", None) is not self.store.engine:
             raise ResearchUnavailable("research and warehouse must use the same database engine")
-        run_id = new_id("research")
+        owner = CURRENT.get()
+        if owner is None:
+            raise ResearchUnavailable("research requires run ownership")
+        run_id = owner.run_id
         now = self.clock()
-        if not self.delivery.acquire(seed.business_id, run_id, now, self.limits.seconds + 120):
-            raise ResearchUnavailable("research already running for tenant")
         state = {"id": run_id, "started_at": now.isoformat(), "dry_run": self.dry_run, "status": "running", "stages": [], "limits": self.limits.model_dump(), "usage": {}}
         self.last_run = state
         def save(): self.store.save(seed.business_id, "run", run_id, state)
@@ -79,7 +81,7 @@ class ResearchPipeline:
                 source = SourceSnapshot.model_validate(cached)
                 return source if source.subject == subject else source.model_copy(update={"subject": subject, "id": digest(source.id + subject)})
             budget.consume(pages=1)
-            try: source = self.fetcher(url, seed.business_id, subject)
+            try: source = guarded_call(self.fetcher, url, seed.business_id, subject)
             except PresenceRejected: return None
             budget.check_time()
             self.cache.put(seed.business_id, key, source.model_dump(mode="json"), timedelta(days=1))
@@ -90,7 +92,7 @@ class ResearchPipeline:
             # Reuse PresenceSource (including its optional browser fallback). Reserve
             # the maximum one-page/one-browser load before calling an opaque port.
             budget.consume(pages=1, browser_calls=1)
-            materials = engine._presence.load(seed)
+            materials = guarded_call(engine._presence.load, seed)
             offer = read_offer(materials, require_audience=False)
             sources = tuple(SourceSnapshot(id=digest(seed.site_url + m.name + m.body + now.isoformat()), business_id=seed.business_id,
                 url=seed.site_url, final_url=seed.site_url, content=m.body, fetched_at=now,
@@ -110,12 +112,21 @@ class ResearchPipeline:
             brief_id = new_id("brief")
             engine._warehouse.save_brief(_brief_record(brief_id, seed.business_id, offer, now, seed.business_archetype))
             stage("market_research")
-            planned = buyer_queries_from_dna(dna)
-            market_id = digest(dna.version + run_id)
-            self.store.save(seed.business_id, "market", market_id, {"kind": "public_need", "queries": list(planned)})
+            # Market conclusions guide research, never substitute for a subject's need.
+            hints = tuple(h.query_template for h in extra_hypotheses)
+            market_key = self.cache.key("market-1-integrated", self.model, dna.model_dump_json(), *hints)
+            cached_market = self.cache.get(seed.business_id, market_key)
+            market = MarketIntelligenceReport.model_validate(cached_market) if cached_market else MarketResearchEngine(reasoner, search, retrieve).research(dna, research_hints=hints)
+            market.validate_grounding(seed.business_id, market.evidence.sources)
+            if not cached_market and not search.errors:
+                self.cache.put(seed.business_id, market_key, market.model_dump(mode="json"), timedelta(days=7))
+            self.store.save_evidence(market.evidence)
+            market_id = digest(market.model_dump_json())
+            self.store.save(seed.business_id, "market", market_id, market.model_dump(mode="json"))
             state["market_document_id"] = market_id
+            state["market_cache_hit"] = cached_market is not None
             stage("hypothesis_generation")
-            proposed = ICPHypothesisEngine(reasoner).generate(dna)
+            proposed = ICPHypothesisEngine(reasoner).generate(dna, market=market)
             hypotheses = []
             for priority, proposed_h in enumerate(proposed, 1):
                 content_version = digest(proposed_h.model_dump_json(exclude={"version"}))
@@ -156,7 +167,11 @@ class ResearchPipeline:
                         # Discovery mode reuses the existing per-hypothesis connector,
                         # but defers contact/LLM work until company deduplication.
                         connector = WebSearchPeopleSearch(search)
-                        for hit in connector.discover(SearchPlanner.adapt(h, query)):
+                        try:
+                            discovered = connector.discover(SearchPlanner.adapt(h, query))
+                        except SearchError:
+                            continue
+                        for hit in discovered:
                             trace_id = new_id("trace")
                             engine._warehouse.save_trace(TraceRecord(id=trace_id, business_id=seed.business_id, hypothesis_id=hypothesis_id, url=hit.url, fetched_at=self.clock(), raw_text=hit.snippet, query_used=query, source_channel="search_snippet"))
                             def reject_trace(code):
@@ -226,16 +241,16 @@ class ResearchPipeline:
                             engine._warehouse.save_trace(TraceRecord(id=trace_id, business_id=seed.business_id, hypothesis_id=hypothesis_id, url=first.final_url, fetched_at=first.fetched_at, raw_text=first.content, query_used=query, source_channel="web_search"))
                             stage("qualification")
                             from evorove_lead.qualification import QualificationAssessment, AdversarialReview
-                            review_key = self.cache.key("qualification-1", self.model, dna.version, h.stable_key, bundle.model_dump_json())
+                            review_key = self.cache.key("qualification-2-market", self.model, dna.version, market_id, h.stable_key, bundle.model_dump_json())
                             cached_review = self.cache.get(seed.business_id, review_key)
                             if cached_review:
                                 assessment = QualificationAssessment.model_validate(cached_review["assessment"])
                                 stage("adversarial_review")
                                 review = AdversarialReview.model_validate(cached_review["review"])
                             else:
-                                assessment = LeadQualificationEngine(reasoner).qualify(dna, h, bundle)
+                                assessment = LeadQualificationEngine(reasoner).qualify(dna, h, bundle, market=market)
                                 stage("adversarial_review")
-                                review = AdversarialValidation(reasoner).review(dna, h, bundle, assessment)
+                                review = AdversarialValidation(reasoner).review(dna, h, bundle, assessment, market=market)
                                 self.cache.put(seed.business_id, review_key, {"assessment": assessment.model_dump(mode="json"), "review": review.model_dump(mode="json")}, timedelta(days=1))
                             # Additional evidence is collected only inside the same run budget.
                             if review.additional_queries:
@@ -250,14 +265,14 @@ class ResearchPipeline:
                                     bundle = draft.bind(extra)
                                     validate_supplied_sources(bundle, extra)
                                     self.store.save_evidence(bundle)
-                                    assessment = LeadQualificationEngine(reasoner).qualify(dna, h, bundle)
-                                    review = AdversarialValidation(reasoner).review(dna, h, bundle, assessment)
+                                    assessment = LeadQualificationEngine(reasoner).qualify(dna, h, bundle, market=market)
+                                    review = AdversarialValidation(reasoner).review(dna, h, bundle, assessment, market=market)
                             stage("qualification_gate")
                             identity = bundle.contact.identity if bundle.contact else ""
                             gate = QualificationGate().evaluate(dna=dna, bundle=bundle, assessment=assessment, review=review, duplicate=self.delivery.seen(seed.business_id, identity), now=self.clock(), research_remaining=(budget.used["iterations"] < self.limits.iterations and query_count < allocation[h.stable_key]))
                             decision_id = new_id("qualification")
                             candidate_id = new_id("candidate")
-                            self.store.save(seed.business_id, "qualification", decision_id, {"run_id": run_id, "candidate_id": candidate_id, "hypothesis_id": hypothesis_id, "dna_version": dna.version, "evidence": bundle.model_dump(mode="json"), "assessment": assessment.model_dump(mode="json"), "review": review.model_dump(mode="json"), "gate": gate.model_dump(mode="json")})
+                            self.store.save(seed.business_id, "qualification", decision_id, {"run_id": run_id, "candidate_id": candidate_id, "hypothesis_id": hypothesis_id, "dna_version": dna.version, "market_document_id": market_id, "evidence": bundle.model_dump(mode="json"), "assessment": assessment.model_dump(mode="json"), "review": review.model_dump(mode="json"), "gate": gate.model_dump(mode="json")})
                             if gate.decision != Decision.QUALIFIED:
                                 reasons.update(gate.codes)
                                 engine._warehouse.save_candidate(CandidateRecord(id=candidate_id, business_id=seed.business_id, hypothesis_id=hypothesis_id, identity=identity, channel="email" if "@" in identity else "unknown", reason=gate.codes[0], reason_source=first.final_url, fit=assessment.product_fit.score or 0, evidence=assessment.need_evidence.score or 0, addressable=bool(identity), decision="rejected", decided_at=self.clock(), trace_id=trace_id, rejection_reason=gate.codes[0]))
@@ -277,22 +292,35 @@ class ResearchPipeline:
                             stats["qualified"] += 1
                             stats["reliable_sources"] += len(bundle.sources)
                             qualified_count += 1
-                    return {"observation_id": new_id("observation"), "qualified": qualified_count, "rejections": dict(reasons)}
+                    return {"observation_id": new_id("observation"), "qualified": qualified_count, "rejections": dict(reasons), "infrastructure_failure": bool(search.errors)}
                 def record_reflection(value): self.store.save(seed.business_id, "reflection", new_id("reflection"), {"run_id": run_id, "hypothesis_key": h.stable_key, **value})
                 ResearchReflectionLoop(reasoner, budget, record_reflection).run(planned_queries[:1], execute, context=h.model_dump(mode="json"))
                 stats["cost_microusd"] = budget.used["cost_microusd"] - initial_cost
-                self.store.save(seed.business_id, "strategy_observation", digest(run_id + h.stable_key), stats)
+                if not search.errors:
+                    self.store.save(seed.business_id, "strategy_observation", digest(run_id + h.stable_key), stats)
             state["status"] = "completed"
+        except SearchError as exc:
+            state["status"] = "budget_exhausted" if exc.code == "search_request_limit" else "partial" if search.successes else "failed"
+            state["stop_reason"] = exc.code
+            state["failed_stage"] = state["stages"][-1]
         except BudgetExhausted as exc:
             state["status"], state["stop_reason"] = "budget_exhausted", str(exc)
         except (ResearchUnavailable, PresenceRejected, OfferRejected, ValidationError, ValueError) as exc:
             state["status"], state["stop_reason"] = "insufficient_evidence", type(exc).__name__
-        except Exception:
-            state["status"], state["stop_reason"] = "failed", "dependency_failure"
+            state["failed_stage"] = state["stages"][-1]
+        except BaseException as exc:
+            state["status"], state["stop_reason"] = ("failed", "dependency_failure") if isinstance(exc, Exception) else ("interrupted", "cancelled")
             raise
         finally:
+            check_ownership()
+            if search.errors:
+                state["search_errors"] = [error.code for error in search.errors]
+                if state["status"] != "budget_exhausted":
+                    state["stop_reason"] = search.errors[-1].code
+                if state["status"] not in {"failed", "budget_exhausted"}:
+                    state["status"] = "budget_exhausted" if search.errors[-1].code == "search_request_limit" else "partial" if search.successes else "failed"
             try:
-                if state["status"] in {"completed", "budget_exhausted", "insufficient_evidence"}:
+                if state["status"] in {"completed", "partial", "budget_exhausted", "insufficient_evidence"} or (state["status"] == "failed" and search.errors):
                     for _, record, payload, candidate, handoff, hypothesis_key, decision_id, claim_ids in sorted(ranked, key=lambda item: (-item[0], item[3].identity)):
                         if self.dry_run:
                             self.store.save(seed.business_id, "dry_run_qualified", record.id, {"hypothesis_id": record.hypothesis_id, "qualification_id": decision_id})
@@ -300,7 +328,7 @@ class ResearchPipeline:
                             if not self.delivery.admit(record, payload, hypothesis_key, run_id, claim_ids=claim_ids):
                                 continue
                             stage("crm_cold")
-                            engine._lead_touch_sink.publish(seed.business_id, payload)
+                            guarded_call(engine._lead_touch_sink.publish, seed.business_id, payload)
                             handoffs.append(handoff)
                         accepted.append(candidate)
             except Exception:
@@ -310,6 +338,5 @@ class ResearchPipeline:
                 state["finished_at"] = self.clock().isoformat()
                 state["qualified"] = len(accepted)
                 state["handoffs"] = len(handoffs)
-                try: save()
-                finally: self.delivery.release(seed.business_id, run_id)
-        return GenerationResult(status=GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT, offer=offer, candidates=tuple(accepted), handoffs=tuple(handoffs), rejected=tuple(rejected))
+                save()
+        return GenerationResult(stop_reason=state.get("stop_reason", ""), status=GenerationStatus(state["status"]) if state["status"] in {"failed", "partial", "budget_exhausted"} else GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT, offer=offer, candidates=tuple(accepted), handoffs=tuple(handoffs), rejected=tuple(rejected))

@@ -47,7 +47,8 @@ class BudgetedCompletion:
         event = {"model": self.model, "pricing_version": self.pricing_version, "reservation": reserved, "status": "reserved"}
         self.ledger.record(self.budget.business_id, self.run_id, event)
         try:
-            reply = self.completion.complete_bounded(system=system, user=user, max_tokens=self.max_output_tokens)
+            from evorove_lead.run_ownership import guarded_call
+            reply = guarded_call(self.completion.complete_bounded, system=system, user=user, max_tokens=self.max_output_tokens)
             actual = dict(input_tokens=reply.input_tokens, output_tokens=reply.output_tokens,
                           cost_microusd=ceil(reply.input_tokens*self.input_rate + reply.output_tokens*self.output_rate))
             if min(reply.input_tokens, reply.output_tokens) < 0: raise ValueError("invalid provider usage")

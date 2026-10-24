@@ -85,7 +85,14 @@ def search_summary(result) -> dict[str, int | str]:
 
 
 def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int | str]:
-    search = hypothesis_search_from_env()
+    from evorove_lead.web_search import SearchError
+    try:
+        if research_dry_run and not (os.getenv("WEB_SEARCH_BASE_URL") or "").strip():
+            raise SearchError("search_not_configured")
+        search = hypothesis_search_from_env()
+    except SearchError as exc:
+        return {"status": "failed", "stop_reason": exc.code, "research_status": "failed", "research_stop_reason": exc.code,
+                "candidates": 0, "handoffs": 0, "rejected": 0, "messages_sent": 0, "crm_pending": 0, "crm_redelivered": 0}
     if search is None:
         summary: dict[str, int | str] = {
             "status": "search_unconnected",
@@ -121,6 +128,8 @@ def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int |
         )
         result = engine.generate(client_zero_seed())
         summary = search_summary(result)
+        if result.stop_reason:
+            summary["stop_reason"] = result.stop_reason
         if result.sent_messages:
             raise RuntimeError("cycle 1 must not send")
     if research_dry_run:
@@ -151,8 +160,13 @@ def preflight(*, probe_search=False):
     if not report["research_enabled"]: report["blockers"].append("research is not enabled")
     if not report["paid_calls_authorized"]: report["blockers"].append("paid LLM calls require separate authorization")
     if probe_search and report["search_configured"]:
-        client = client_from_env()
-        hits = client.search("Evorove public website") if client else ()
+        from evorove_lead.web_search import SearchError
+        try:
+            client = client_from_env()
+            hits = client.search("Evorove public website") if client else ()
+        except SearchError as exc:
+            report["blockers"].append(exc.code)
+            hits = ()
         report["search_probe"] = "results_received" if hits else "empty_or_unavailable"
         if not hits: report["blockers"].append("search probe did not establish working retrieval")
     return report
@@ -181,7 +195,9 @@ def main() -> None:
             **summary
         )
     )
-    if summary["status"] == "search_unconnected":
+    if summary.get("stop_reason"):
+        print("stop_reason=" + str(summary["stop_reason"]))
+    if summary["status"] in {"search_unconnected", "failed", "partial", "budget_exhausted"}:
         raise SystemExit(2)
 
 

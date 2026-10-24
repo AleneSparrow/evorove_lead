@@ -61,16 +61,3 @@ class ResearchDelivery:
                 if session.get(AdmissionRow, (record.business_id, key)): return False
             raise
 
-    def acquire(self, business_id, run_id, now, seconds):
-        with Session(self.engine) as session, session.begin():
-            if self.engine.dialect.name == "postgresql":
-                from sqlalchemy.dialects.postgresql import insert
-            else:
-                from sqlalchemy.dialects.sqlite import insert
-            stmt = insert(RunLeaseRow).values(business_id=business_id, run_id=run_id, expires_at=now + timedelta(seconds=seconds))
-            stmt = stmt.on_conflict_do_update(index_elements=["business_id"], set_={"run_id": run_id, "expires_at": now + timedelta(seconds=seconds)}, where=RunLeaseRow.expires_at <= now)
-            return session.execute(stmt.returning(RunLeaseRow.run_id)).scalar_one_or_none() == run_id
-
-    def release(self, business_id, run_id):
-        with Session(self.engine) as session, session.begin():
-            session.execute(delete(RunLeaseRow).where(RunLeaseRow.business_id == business_id, RunLeaseRow.run_id == run_id))

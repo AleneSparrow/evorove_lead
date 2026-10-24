@@ -59,16 +59,16 @@ class LeadQualificationEngine:
     def __init__(self, reasoner):
         self.reasoner = reasoner
 
-    def qualify(self, dna, hypothesis, bundle):
-        assessment = self.reasoner.ask("Assess six independent dimensions. Cite claim IDs. Need must be demonstrated for THIS subject. Do not infer revenue or purchasing budget.", QualificationAssessment, {"dna": dna.model_dump(mode="json"), "hypothesis": hypothesis.model_dump(mode="json"), "evidence": bundle.model_dump(mode="json")})
+    def qualify(self, dna, hypothesis, bundle, *, market=None):
+        assessment = self.reasoner.ask("Assess six independent dimensions. Cite claim IDs. Need must be demonstrated for THIS subject. Market evidence is research context, not evidence of this subject's need; cite only candidate evidence claim IDs. Do not infer revenue or purchasing budget.", QualificationAssessment, {"dna": dna.model_dump(mode="json"), "hypothesis": hypothesis.model_dump(mode="json"), "market": market.model_dump(mode="json") if market is not None else None, "evidence": bundle.model_dump(mode="json")})
         return assessment
 
 class AdversarialValidation:
     def __init__(self, reasoner):
         self.reasoner = reasoner
 
-    def review(self, dna, hypothesis, bundle, assessment):
-        return self.reasoner.ask("Independently challenge qualification. Check each material claim for semantic entailment by its quotes, correct subject and current applicability. Identify alternative explanations, exclusions, unsupported claims and critical contradictions. Missing evidence is not negative evidence. Explicitly validate category, geography, demonstrated need and contact relationship.", AdversarialReview, {"dna": dna.model_dump(mode="json"), "hypothesis": hypothesis.model_dump(mode="json"), "evidence": bundle.model_dump(mode="json"), "assessment": assessment.model_dump(mode="json")})
+    def review(self, dna, hypothesis, bundle, assessment, *, market=None):
+        return self.reasoner.ask("Independently challenge qualification. Check each material claim for semantic entailment by its quotes, correct subject and current applicability. Identify alternative explanations, exclusions, unsupported claims and critical contradictions. Missing evidence is not negative evidence. Market context is not proof of this subject's need; cite only candidate evidence claim IDs. Explicitly validate category, geography, demonstrated need and contact relationship.", AdversarialReview, {"dna": dna.model_dump(mode="json"), "hypothesis": hypothesis.model_dump(mode="json"), "market": market.model_dump(mode="json") if market is not None else None, "evidence": bundle.model_dump(mode="json"), "assessment": assessment.model_dump(mode="json")})
 
 class QualificationGate:
     def __init__(self, *, max_source_age_days=30, max_signal_age_days=90):

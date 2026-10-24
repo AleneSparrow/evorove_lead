@@ -6,6 +6,7 @@ from evorove_lead.presence import PresenceRejected
 from evorove_lead.web_search import (
     HttpSearxngWebSearchClient,
     SearchHit,
+    SearchError,
     client_from_env,
     fetch_page_text,
 )
@@ -77,19 +78,21 @@ def test_client_rejects_blank_base_url():
         HttpSearxngWebSearchClient("")
 
 
-def test_client_returns_empty_on_malformed_json():
+def test_client_rejects_malformed_json():
     client = HttpSearxngWebSearchClient(
         "http://searx.internal:8080", opener=_opener(b"not json")
     )
 
-    assert client.search("anything") == ()
+    with pytest.raises(SearchError, match="search_invalid_json"):
+        client.search("anything")
 
 
-def test_client_returns_empty_when_results_key_missing():
+def test_client_rejects_missing_results():
     body = json.dumps({"other": []}).encode("utf-8")
     client = HttpSearxngWebSearchClient("http://searx.internal:8080", opener=_opener(body))
 
-    assert client.search("anything") == ()
+    with pytest.raises(SearchError, match="search_invalid_structure"):
+        client.search("anything")
 
 
 def test_client_from_env_needs_base_url(monkeypatch):

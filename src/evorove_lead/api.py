@@ -35,6 +35,8 @@ from evorove_lead.searches import (
     run_due,
     run_due_market_signals,
     run_target,
+    claim_target,
+    recover_targets,
     search_targets_from_env,
 )
 from evorove_lead.web_search import WebSearchClient, client_from_env
@@ -99,13 +101,21 @@ def create_app(
     register_insights_routes(app, store)
 
     def _engine_or_503():
-        engine = make_engine()
+        from evorove_lead.web_search import SearchError
+        try:
+            engine = make_engine()
+        except SearchError as exc:
+            raise HTTPException(status_code=503, detail=exc.code) from None
         if engine is None:
             raise HTTPException(status_code=503, detail="people search is not connected (WEB_SEARCH_BASE_URL)")
         return engine
 
     def _market_signal_deps_or_503() -> tuple[WebSearchClient, MarketSignalCompletion]:
-        client = signal_web_search_client_factory()
+        from evorove_lead.web_search import SearchError
+        try:
+            client = signal_web_search_client_factory()
+        except SearchError as exc:
+            raise HTTPException(status_code=503, detail=exc.code) from None
         if client is None:
             raise HTTPException(status_code=503, detail="people search is not connected (WEB_SEARCH_BASE_URL)")
         llm = signal_llm_factory()
@@ -115,6 +125,25 @@ def create_app(
                 detail="market signal reading is not enabled (AI_PROVIDER=anthropic required)",
             )
         return client, llm
+
+    def target_view(target):
+        view = _target_view(target)
+        from evorove_lead.run_ownership import LeaseStore
+        db = getattr(search_targets, "database_engine", None)
+        if db is None:
+            db = getattr(store, "database_engine", None)
+        if db is not None:
+            from evorove_lead.intelligence_store import IntelligenceStore
+            details = IntelligenceStore(db).get(target.business_id, "search_status", "latest")
+            if details and details["status"] == target.last_status and target.last_run_at and details["last_run_at"] == target.last_run_at.isoformat():
+                # A finished empty search is no_fit without a transport reason.
+                # Failure, partial, and budget stops keep the reason.
+                if details.get("stop_reason"):
+                    view["stop_reason"] = details["stop_reason"]
+                if details.get("attempt_id"):
+                    view["attempt_id"] = details["attempt_id"]
+            view.update(LeaseStore(db).describe(target.business_id))
+        return view
 
     @app.post("/api/v1/internal/searches", status_code=202)
     def start_search(
@@ -129,8 +158,6 @@ def create_app(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         engine = _engine_or_503()
         existing = search_targets.get(body.business_id)
-        if existing is not None and existing.last_status == "running":
-            return _target_view(existing)
         target = SearchTarget(
             business_id=body.business_id,
             site_url=site_url,
@@ -140,9 +167,16 @@ def create_app(
             last_status="queued",
             last_cold=existing.last_cold if existing else 0,
         )
-        search_targets.save(target)
-        background.add_task(run_target, search_targets, engine, target)
-        return _target_view(target)
+        from evorove_lead.run_ownership import RunBusy
+        try:
+            owner = claim_target(search_targets, engine, target)
+        except RunBusy as exc:
+            current = search_targets.get(body.business_id)
+            view = target_view(current or target)
+            view["stop_reason"] = str(exc)
+            return view
+        background.add_task(run_target, search_targets, engine, target, owner=owner)
+        return target_view(target)
 
     @app.get("/api/v1/internal/searches/{business_id}")
     def search_status(
@@ -150,22 +184,23 @@ def create_app(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
         _require_task_secret(x_internal_task_secret)
+        recover_targets(search_targets)
         target = search_targets.get(business_id)
         if target is None:
             raise HTTPException(status_code=404, detail="no search for this business yet")
-        return _target_view(target)
+        return target_view(target)
 
     @app.post("/api/v1/internal/searches/run-due")
     def run_due_searches(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, object]:
         _require_task_secret(x_internal_task_secret)
         return run_due(search_targets, _engine_or_503())
 
     @app.post("/api/v1/internal/market-signals/run-due")
     def run_due_market_signals_route(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, object]:
         """Track 4's own daily cron entry point -- see run_due_market_signals."""
 
         _require_task_secret(x_internal_task_secret)

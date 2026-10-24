@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Sequence
 
+from evorove_lead.run_ownership import guarded_call, check_ownership
 from evorove_lead.business import BusinessSeed
 from evorove_lead.candidate import Candidate, CandidateRejected, accept_candidate
 from evorove_lead.selection import Selection, SelectionProfile, select
@@ -51,6 +52,9 @@ from evorove_lead.warehouse import (
 
 
 class GenerationStatus(str, Enum):
+    FAILED = "failed"
+    PARTIAL = "partial"
+    BUDGET_EXHAUSTED = "budget_exhausted"
     NEED_PRESENCE = "need_presence"
     OFFER_INCOMPLETE = "offer_incomplete"
     SEARCH_UNCONNECTED = "search_unconnected"
@@ -71,6 +75,8 @@ class GenerationResult:
     candidates: tuple[Candidate, ...]
     handoffs: tuple[Cycle1Handoff, ...]
     rejected: tuple[RejectedHit, ...]
+
+    stop_reason: str = ""
 
     @property
     def sent_messages(self) -> tuple[()]:
@@ -126,7 +132,37 @@ class LeadGenerationEngine:
                 if client is not None:
                     self._research_pipeline = research_pipeline_from_env(self._warehouse, client)
 
-    def generate(
+    def generate(self, seed: BusinessSeed, *, extra_hypotheses=()) -> GenerationResult:
+        from evorove_lead.run_ownership import CURRENT, LeaseStore, RunBusy, OwnershipLost
+        db = getattr(self._warehouse, "database_engine", None)
+        current = CURRENT.get()
+        if current is not None:
+            if current.business_id != seed.business_id or (db is not None and current.store.engine is not db):
+                raise OwnershipLost("tenant_ownership_mismatch")
+            current.check()
+            return self._generate_result(seed, extra_hypotheses=extra_hypotheses)
+        if db is None or not seed.business_id:
+            return self._generate_result(seed, extra_hypotheses=extra_hypotheses)
+        try:
+            owner = LeaseStore(db).acquire(seed.business_id)
+        except RunBusy as exc:
+            return GenerationResult(GenerationStatus.FAILED, None, (), (), (), stop_reason=str(exc))
+        try:
+            with owner.activate():
+                result = self._generate_result(seed, extra_hypotheses=extra_hypotheses)
+                owner.finish(result.status.value, result.stop_reason, len(result.handoffs))
+                return result
+        except OwnershipLost:
+            return GenerationResult(GenerationStatus.FAILED, None, (), (), (), stop_reason="run_ownership_lost")
+
+    def _generate_result(self, seed, *, extra_hypotheses=()):
+        from evorove_lead.web_search import SearchError
+        try:
+            return self._generate(seed, extra_hypotheses=extra_hypotheses)
+        except SearchError as exc:
+            return GenerationResult(GenerationStatus.BUDGET_EXHAUSTED if exc.code == "search_request_limit" else GenerationStatus.FAILED, None, (), (), (), stop_reason=exc.code)
+
+    def _generate(
         self, seed: BusinessSeed, *, extra_hypotheses: Sequence[Hypothesis] = ()
     ) -> GenerationResult:
         if self._research_pipeline is not None:
@@ -145,7 +181,7 @@ class LeadGenerationEngine:
         if not self._policy.may_read_presence(seed.site_url):
             return empty
         try:
-            materials = self._presence.load(seed)
+            materials = guarded_call(self._presence.load, seed)
         except PresenceRejected:
             return empty
         if not materials:
@@ -155,7 +191,7 @@ class LeadGenerationEngine:
         try:
             if self._marketing_analyzer is not None:
                 offer = read_offer(materials, require_audience=False)
-                analysis = self._marketing_analyzer.analyze(materials)
+                analysis = guarded_call(self._marketing_analyzer.analyze, materials)
             else:
                 offer = read_offer(materials)
         except (OfferRejected, MarketingAnalysisRejected):
@@ -203,7 +239,7 @@ class LeadGenerationEngine:
         accepted: list[Candidate] = []
         handoffs: list[Cycle1Handoff] = []
         rejected: list[RejectedHit] = []
-        for hit in self._people_search.find(offer):
+        for hit in guarded_call(self._people_search.find, offer):
             if hypothesis_id:
                 self._warehouse.save_trace(_hit_to_trace_record(seed.business_id, hypothesis_id, hit))
             try:
@@ -236,7 +272,7 @@ class LeadGenerationEngine:
                     )
                 )
             if seed.business_id and (phone or email):
-                self._lead_touch_sink.publish(
+                guarded_call(self._lead_touch_sink.publish,
                     seed.business_id,
                     assembled_touch(seed.business_id, candidate, handoff),
                 )
@@ -371,9 +407,17 @@ class LeadGenerationEngine:
                 business_archetype=seed.business_archetype,
             )
         hypotheses = (*hypotheses, *extra_hypotheses)
+        search_errors = []
+        successful_queries = 0
         for hypothesis in hypotheses:
             hypothesis_id = new_id("hypothesis") if business_id else ""
-            findings = tuple(self._hypothesis_search.find(hypothesis))
+            from evorove_lead.web_search import SearchError
+            try:
+                findings = guarded_call(lambda: tuple(self._hypothesis_search.find(hypothesis)))
+                successful_queries += 1
+            except SearchError as exc:
+                search_errors.append(exc)
+                continue  # No verification/negative hypothesis evidence from a failed query.
             verified = verify_hypothesis(
                 hypothesis, _StaticProbe(tuple(f.hit for f in findings if f.hit is not None))
             )
@@ -437,14 +481,17 @@ class LeadGenerationEngine:
                         )
                     )
                 if business_id and (phone or email):
-                    self._lead_touch_sink.publish(
+                    guarded_call(self._lead_touch_sink.publish,
                         business_id,
                         assembled_touch(business_id, candidate, handoff, segment=hypothesis.audience_segment),
                     )
 
         status = GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT
+        if search_errors:
+            status = GenerationStatus.BUDGET_EXHAUSTED if search_errors[-1].code == "search_request_limit" else GenerationStatus.PARTIAL if successful_queries else GenerationStatus.FAILED
         return GenerationResult(
             status=status,
+            stop_reason=search_errors[-1].code if search_errors else "",
             offer=offer,
             candidates=tuple(accepted),
             handoffs=tuple(handoffs),

@@ -23,7 +23,23 @@ CRM lead-touch payload, person_id/touch_id, retry API и sales outcome API.
 `RESEARCH_ENABLED` по умолчанию выключен. При выключенном новом pipeline старый
 поиск пригоден для диагностики и склада анализа, но не обходит новый gate.
 
-## Реализованные этапы 0–8
+## Уточнение интеграции 23 октября 2026
+
+Исторические заявления ниже о полном market research не соответствовали c60f6f0:
+ResearchPipeline сохранял только public_need query plan, не вызывая
+MarketResearchEngine. В текущем пакете этот существующий движок подключён:
+DNA → budgeted market research → grounded market report → ICP → public prospect
+search → candidate evidence → qualification/review → gate → rank → разрешённый
+atomic admission. Market report также передаётся в qualification/review и связан
+с qualification document через market_document_id. Market evidence не даёт права
+признать потребность отдельного кандидата без его собственных источников.
+
+Tenant/model/DNA/hints-scoped cache предотвращает повторное market research
+в пределах 7 дней. Ошибка или отсутствие market evidence прерывают run до ICP;
+полное завершение не объявляется. Модель, тарифы, миграции и CRM payload не менялись.
+Условность этапов и актуальная инструкция: [runbook](client-zero-intelligence-runbook.md).
+
+## Реализованные этапы 0–8 (исторический перечень; см. уточнение выше)
 
 0. Аудит компонентов, baseline, фиксация внешних ограничений.
 1. BusinessDNA и типы SourceSnapshot/EvidenceClaim/ClaimSource/ContactEvidence;

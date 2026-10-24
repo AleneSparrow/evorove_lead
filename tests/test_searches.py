@@ -192,4 +192,8 @@ def test_run_due_market_signals_one_business_failing_does_not_stop_the_sweep() -
 
     result = run_due_market_signals(targets, signal_store, web_client, llm, engine)
 
-    assert result == {"checked": 2, "triggered": 2, "cold": 0}
+    assert result == {"checked": 2, "triggered": 2, "cold": 0, "errors": [
+        {"business_id": tenant, "status": "failed", "stop_reason": "dependency_failure"}
+        for tenant in ("tenant-a", "tenant-b")
+    ]}
+    assert all(t.last_status == "failed" for t in targets.all_targets())

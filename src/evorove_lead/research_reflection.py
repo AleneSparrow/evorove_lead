@@ -26,7 +26,7 @@ class ResearchReflectionLoop:
             result = execute(queries)
             history.append(result)
             self.record({"iteration": iteration + 1, "queries": queries, "result": result})
-            if result.get("qualified", 0) or iteration + 1 == self.budget.limits.iterations: break
+            if result.get("infrastructure_failure") or result.get("qualified", 0) or iteration + 1 == self.budget.limits.iterations: break
             reflection = self.reasoner.ask("Analyze failed research: segment, signal, query, sources, geography, assumptions or commercial value. Recommend additional research only if justified. Never relax evidence requirements. Evidence references are observation IDs from history.", Reflection, {"context": context, "history": history})
             ids = {str(item["observation_id"]) for item in history if "observation_id" in item}
             if not set(reflection.evidence) <= ids:

@@ -13,7 +13,7 @@ import json
 import os
 from dataclasses import dataclass
 from typing import Protocol, Sequence
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode, urlparse
 from urllib.request import Request, urlopen
 
@@ -68,56 +68,99 @@ class WebSearchClient(Protocol):
         """Return a handful of public results for this query. Empty is allowed."""
 
 
+class SearchError(RuntimeError):
+    """Sanitized transport outcome; never includes endpoint, query or response body."""
+    def __init__(self, code, *, retryable=False, retry_after=None, hits=()):
+        super().__init__(code)
+        self.code, self.retryable, self.retry_after = code, retryable, retry_after
+        self.hits = tuple(hits)
+
+
 def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
     try:
-        payload = json.loads(body.decode("utf-8", errors="replace"))
-    except json.JSONDecodeError:
-        return ()
-    results = payload.get("results") if isinstance(payload, dict) else None
-    if not isinstance(results, list):
-        return ()
-    hits: list[SearchHit] = []
-    for item in results[:MAX_RESULTS_PER_QUERY]:
-        if not isinstance(item, dict):
-            continue
-        url = (item.get("url") or "").strip()
-        if not url:
-            continue
-        hits.append(SearchHit(url=url, snippet=(item.get("content") or "").strip()))
+        payload = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        raise SearchError("search_invalid_json") from None
+    if not isinstance(payload, dict) or not isinstance(payload.get("results"), list):
+        raise SearchError("search_invalid_structure")
+    hits = []
+    for item in payload["results"]:
+        if not isinstance(item, dict) or not isinstance(item.get("url"), str) or not item["url"].strip() or not isinstance(item.get("content", ""), str):
+            raise SearchError("search_invalid_structure")
+        if len(hits) < MAX_RESULTS_PER_QUERY:
+            hits.append(SearchHit(url=item["url"].strip(), snippet=item.get("content", "").strip()))
+    failures = payload.get("unresponsive_engines", [])
+    if not isinstance(failures, list):
+        raise SearchError("search_invalid_structure")
+    if failures:
+        raise SearchError("search_sources_unresponsive", hits=hits)
     return tuple(hits)
 
 
 class HttpSearxngWebSearchClient:
-    """Query a SearxNG-shaped JSON search endpoint the owner runs herself."""
-
-    def __init__(self, base_url: str, opener=urlopen) -> None:
+    """One HTTP attempt per call. BudgetedSearch alone owns transient retries."""
+    def __init__(self, base_url: str, opener=None, *, max_requests=30):
         self._base_url = _validate_configured_base_url(base_url).rstrip("/")
-        self._opener = opener
+        self._opener = opener or urlopen
+        self.max_requests, self.requests = max_requests, 0
+        self._cache = {}
 
     def search(self, query: str) -> Sequence[SearchHit]:
-        query_string = urlencode({"q": query, "format": "json"})
-        url = f"{self._base_url}/search?{query_string}"
-        request = Request(url, headers={"User-Agent": USER_AGENT})
+        if query in self._cache:
+            return self._cache[query]
+        if self.max_requests is not None and self.requests >= self.max_requests:
+            raise SearchError("search_request_limit")
+        self.requests += 1
+        request = Request(f"{self._base_url}/search?{urlencode({'q': query, 'format': 'json'})}", headers={"User-Agent": USER_AGENT})
         try:
             with self._opener(request, timeout=SEARCH_TIMEOUT_SECONDS) as response:
+                status = getattr(response, "status", 200)
+                if status != 200:
+                    raise self._http_error(status, getattr(response, "headers", {}))
                 body = response.read(MAX_BODY_BYTES + 1)
-        except (URLError, TimeoutError, OSError):
-            return ()
+        except HTTPError as exc:
+            raise self._http_error(exc.code, exc.headers) from None
+        except TimeoutError:
+            raise SearchError("search_timeout", retryable=True) from None
+        except (URLError, OSError):
+            raise SearchError("search_network_error", retryable=True) from None
         if len(body) > MAX_BODY_BYTES:
-            return ()
-        return _parse_results(body)
+            raise SearchError("search_response_too_large")
+        hits = _parse_results(body)
+        self._cache[query] = hits
+        return hits
+
+    @staticmethod
+    def _http_error(status, headers):
+        from datetime import datetime, timezone
+        from email.utils import parsedate_to_datetime
+        raw = (headers or {}).get("Retry-After")
+        delay = None
+        if raw:
+            try:
+                delay = max(0., float(raw))
+            except (ValueError, TypeError):
+                try:
+                    delay = max(0., (parsedate_to_datetime(raw) - datetime.now(timezone.utc)).total_seconds())
+                except (ValueError, TypeError, OverflowError):
+                    pass
+        return SearchError(f"search_http_{status}", retryable=status in {429, 500, 502, 503, 504}, retry_after=delay)
 
 
-def client_from_env() -> WebSearchClient | None:
-    """No `WEB_SEARCH_BASE_URL` -> no client. The engine treats that as unconnected."""
-
+def client_from_env(*, required=False) -> WebSearchClient | None:
     base_url = (os.getenv("WEB_SEARCH_BASE_URL") or "").strip()
     if not base_url:
+        if required or os.getenv("RESEARCH_ENABLED") == "1":
+            raise SearchError("search_not_configured")
         return None
     try:
-        return HttpSearxngWebSearchClient(base_url)
-    except PresenceRejected:
-        return None
+        raw_limit = os.getenv("LEAD_MAX_SEARCH_REQUESTS", "30")
+        limit = int(raw_limit)
+        if limit < 0:
+            raise ValueError("negative limit")
+        return HttpSearxngWebSearchClient(base_url, max_requests=limit or None)
+    except (PresenceRejected, ValueError):
+        raise SearchError("search_invalid_configuration") from None
 
 
 def fetch_page_text(url: str, opener=urlopen, host_ok=_host_is_public) -> str:
