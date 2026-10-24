@@ -305,7 +305,14 @@ class ResearchPipeline:
             state["failed_stage"] = state["stages"][-1]
         except BudgetExhausted as exc:
             state["status"], state["stop_reason"] = "budget_exhausted", str(exc)
-        except (ResearchUnavailable, PresenceRejected, OfferRejected, ValidationError, ValueError) as exc:
+        except PresenceRejected:
+            failed_stage = state["stages"][-1] if state["stages"] else "business_analysis"
+            if failed_stage == "business_analysis":
+                state["status"], state["stop_reason"] = "failed", "brief_unavailable"
+            else:
+                state["status"], state["stop_reason"] = "insufficient_evidence", "PresenceRejected"
+            state["failed_stage"] = failed_stage
+        except (ResearchUnavailable, OfferRejected, ValidationError, ValueError) as exc:
             state["status"], state["stop_reason"] = "insufficient_evidence", type(exc).__name__
             state["failed_stage"] = state["stages"][-1]
         except BaseException as exc:

@@ -105,6 +105,46 @@ def test_reflection_revises_empty_search_then_qualifies(tmp_path):
     assert any("strategy_change" in r for r in reflections)
 
 
+def test_unread_client_site_is_brief_unavailable_not_no_fit(tmp_path):
+    from evorove_lead.engine import GenerationStatus
+    from evorove_lead.presence import PresenceRejected
+
+    class DeadSite:
+        def load(self, seed):
+            raise PresenceRejected("owner site could not be read")
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    engine._presence = DeadSite()
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert result.status is GenerationStatus.FAILED
+    assert result.status is not GenerationStatus.NO_FIT
+    assert result.stop_reason == "brief_unavailable"
+    assert result.offer is None
+    assert result.candidates == ()
+    assert result.handoffs == ()
+    assert pipeline.last_run["status"] == "failed"
+    assert pipeline.last_run["stop_reason"] == "brief_unavailable"
+    assert pipeline.last_run["failed_stage"] == "business_analysis"
+    assert pipeline.last_run["usage"]["queries"] == 0
+    assert pipeline.client.queries == []
+    assert not crm.accepted and store.pending_count() == 0
+
+
+def test_completed_search_with_no_qualified_people_stays_no_fit(tmp_path):
+    from evorove_lead.engine import GenerationStatus
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, contradiction=True)
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert result.status is GenerationStatus.NO_FIT
+    assert result.stop_reason == ""
+    assert result.handoffs == ()
+    assert result.rejected
+    assert pipeline.last_run["status"] == "completed"
+    assert pipeline.last_run["usage"]["queries"] >= 1
+    assert pipeline.client.queries
+    assert not crm.accepted and store.pending_count() == 0
+
+
 def test_search_failure_is_recorded_and_does_not_publish(tmp_path):
     class BrokenSearch:
         def search(self, query): raise RuntimeError("search unavailable")
