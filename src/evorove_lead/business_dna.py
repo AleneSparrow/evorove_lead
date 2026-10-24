@@ -4,6 +4,9 @@ from pydantic import Field
 from typing import Literal
 from evorove_lead.evidence import ClaimId, EvidenceBundle, EvidenceClaim, EvidenceDraft, StrictModel, digest
 
+DNA_PROMPT_VERSION = "dna-3"
+DNA_CACHE_KIND = "dna-3-provenance"
+
 
 class BusinessDNA(StrictModel):
     schema_version: int = 1
@@ -14,10 +17,10 @@ class BusinessDNA(StrictModel):
     problems: tuple[str, ...] = ()
     value_proposition: tuple[str, ...] = ()
     business_model: tuple[str, ...] = ()
-    geography: tuple[str, ...] = Field(min_length=1)
-    service_country: Literal["US", "OTHER", "UNKNOWN"] = "UNKNOWN"
+    geography: tuple[str, ...] = ()
+    service_country: Literal["US", "OTHER", "UNKNOWN"] = "US"
     service_localities: tuple[str, ...] = ()
-    customer_categories: tuple[str, ...] = Field(min_length=1)
+    customer_categories: tuple[str, ...] = ()
     positioning: tuple[str, ...] = ()
     differentiation: tuple[str, ...] = ()
     pricing: tuple[str, ...] = ()
@@ -35,10 +38,7 @@ class BusinessDNA(StrictModel):
             for ref in getattr(self, field):
                 if ref not in claims:
                     raise ValueError(f"unknown DNA claim in {field}")
-        import re
         area_quotes = " ".join(link.quote for ref in self.geography for link in claims[ref].sources if link.relationship == "supports")
-        if self.service_country == "US" and not re.search(r"\bUS\b|\bUSA\b|United States|U\.S\.", area_quotes):
-            raise ValueError("US service geography must be grounded")
         if any(place.casefold() not in area_quotes.casefold() for place in self.service_localities):
             raise ValueError("service locality must be grounded")
         for ref in (*self.services, *self.geography, *self.pricing):
@@ -46,7 +46,7 @@ class BusinessDNA(StrictModel):
                 raise ValueError("service, geography and price must be sourced")
 
     @staticmethod
-    def version_for(content: str, prompt_version: str = "dna-2") -> str:
+    def version_for(content: str, prompt_version: str = DNA_PROMPT_VERSION) -> str:
         return digest(prompt_version + "\n" + content)
 
 
@@ -94,7 +94,7 @@ class BusinessDNAModelDraft(StrictModel):
     business_id: str
     version: str
     site_url: str
-    service_country: Literal["US", "OTHER", "UNKNOWN"] = "UNKNOWN"
+    service_country: Literal["US", "OTHER", "UNKNOWN"] = "US"
     service_localities: tuple[str, ...] = ()
     must_not_claim: tuple[str, ...] = ("unverified price", "discount", "guarantee", "legal claim")
     unknowns: tuple[str, ...] = ()
@@ -105,6 +105,10 @@ class BusinessDNAModelDraft(StrictModel):
         for claim in self.evidence.claims:
             for slot in dict.fromkeys(claim.slots):
                 grouped[DNA_SLOTS[slot]].append(claim.id)
+        unknowns = list(self.unknowns)
+        for field in ("geography", "customer_categories"):
+            if not grouped[field] and field not in unknowns:
+                unknowns.append(field)
         return BusinessDNA(
             schema_version=self.schema_version,
             business_id=self.business_id,
@@ -113,7 +117,7 @@ class BusinessDNAModelDraft(StrictModel):
             service_country=self.service_country,
             service_localities=self.service_localities,
             must_not_claim=self.must_not_claim,
-            unknowns=self.unknowns,
+            unknowns=tuple(unknowns),
             evidence=self.evidence.bind(sources),
             **{field: tuple(ids) for field, ids in grouped.items()},
         )

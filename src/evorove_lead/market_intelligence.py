@@ -203,7 +203,7 @@ class BusinessDNAEngine:
 
     def analyze(self, business_id: str, site_url: str, sources: tuple[SourceSnapshot, ...]) -> BusinessDNA:
         version = BusinessDNA.version_for("\n".join(s.content_hash for s in sources))
-        draft = self.reasoner.ask("Understand the business. Each claim has slots naming the DNA fields it supports. Preserve supplied version and tenant.", BusinessDNAModelDraft, dict(business_id=business_id, site_url=site_url, version=version, sources=[s.model_dump(mode="json") for s in sources]))
+        draft = self.reasoner.ask("Understand the business. Each claim has slots naming the DNA fields it supports. Omit geography and customer_category slots when sources do not name them. Default service_country is US unless sources name another country. Preserve supplied version and tenant.", BusinessDNAModelDraft, dict(business_id=business_id, site_url=site_url, version=version, sources=[s.model_dump(mode="json") for s in sources]))
         try:
             dna = draft.assemble(sources)
         except ValidationError as exc:

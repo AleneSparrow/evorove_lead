@@ -30,7 +30,9 @@ from evorove_lead.web_search import fetch_source_snapshot
 
 DNA_STAGE = (
     "Understand the business. Each claim has slots naming the DNA fields it "
-    "supports. Preserve supplied version and tenant."
+    "supports. Omit geography and customer_category slots when sources do not "
+    "name them. Default service_country is US unless sources name another "
+    "country. Preserve supplied version and tenant."
 )
 PUBLISHED_RATES = (2.0, 10.0)
 CONSERVATIVE_RATES = (3.0, 15.0)

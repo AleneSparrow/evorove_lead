@@ -54,3 +54,24 @@ def test_company_role_is_still_mandatory():
     contact = args["bundle"].contact.model_copy(update={"role": "", "role_claim": ""})
     args["bundle"] = args["bundle"].model_copy(update={"contact": contact})
     assert QualificationGate().evaluate(**args).decision != Decision.QUALIFIED
+
+
+def test_empty_client_geography_does_not_relax_candidate_us_gate():
+    args = qualified_fixture()
+    assert args["dna"].service_country == "US"
+    assert QualificationGate().evaluate(**args).decision == Decision.QUALIFIED
+    args["dna"] = SimpleNamespace(
+        business_id="a", site_url="https://seller.example", service_country="OTHER",
+        service_localities=(), validate_grounding=lambda: None,
+    )
+    other = QualificationGate().evaluate(**args)
+    assert other.decision != Decision.QUALIFIED
+    assert other.codes == ("country_not_confirmed",)
+    args = qualified_fixture()
+    claim = args["bundle"].claims[0].model_copy(update={
+        "sources": (ClaimSource(source_id="s", quote="Jane Owner jane@buyer.example needs intake help"),),
+    })
+    args["bundle"] = args["bundle"].model_copy(update={"claims": (claim,)})
+    ungrounded = QualificationGate().evaluate(**args)
+    assert ungrounded.decision != Decision.QUALIFIED
+    assert ungrounded.codes == ("country_not_grounded",)

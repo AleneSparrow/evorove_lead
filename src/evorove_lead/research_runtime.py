@@ -7,7 +7,7 @@ from datetime import timedelta
 from urllib.parse import urlsplit, urljoin
 from collections import Counter
 from pydantic import ValidationError
-from evorove_lead.business_dna import BusinessDNA
+from evorove_lead.business_dna import BusinessDNA, DNA_CACHE_KIND
 from evorove_lead.evidence import EvidenceBundle, EvidenceDraft, SourceSnapshot, digest, utcnow, company_key
 from evorove_lead.market_intelligence import (
     BusinessDNAEngine, MarketResearchEngine, MarketIntelligenceReport, StructuredReasoner,
@@ -114,7 +114,7 @@ class ResearchPipeline:
                 subject=seed.business_id) for m in materials)
             additional_business_sources = tuple(source for path in ("/services", "/about") if (source := retrieve(urljoin(seed.site_url, path), seed.business_id)) is not None)
             sources = (*sources, *additional_business_sources)
-            dna_key = self.cache.key("dna-2-provenance", seed.site_url, self.model, *(s.content_hash for s in sources))
+            dna_key = self.cache.key(DNA_CACHE_KIND, seed.site_url, self.model, *(s.content_hash for s in sources))
             cached = self.cache.get(seed.business_id, dna_key)
             dna = BusinessDNA.model_validate(cached) if cached else BusinessDNAEngine(reasoner).analyze(seed.business_id, seed.site_url, sources)
             dna.validate_grounding()

@@ -83,3 +83,65 @@ def test_dna_slots_assemble_claim_ids_and_reject_prose_lists():
     claim["sources"][0]["quote"] = "a product we do not sell"
     with pytest.raises(ValidationError):
         BusinessDNAModelDraft.model_validate({"business_id": "a", "site_url": "https://seller.example", "version": "v", "service_country": "US", "evidence": {"business_id": "a", "subject": "a", "claims": [claim]}}).assemble((source,))
+
+
+def _service_only_draft(quote="Evorove finds fitting people from the open web.", slots=("service",)):
+    source = SourceSnapshot(
+        id="s", business_id="a", url="https://seller.example", final_url="https://seller.example",
+        content="Evorove finds fitting people from the open web.",
+        fetched_at=datetime(2026, 10, 9, tzinfo=timezone.utc), source_type="first_party", subject="a",
+    )
+    claim = {
+        "id": "svc", "subject": "a", "predicate": "offers", "text": "finds fitting people",
+        "assertion_type": "BUSINESS_CLAIM", "confidence": 0.8, "confidence_reason": "published offer",
+        "sources": [{"source_id": "s", "quote": quote, "relationship": "supports"}],
+        "slots": list(slots),
+    }
+    draft = BusinessDNAModelDraft.model_validate({
+        "business_id": "a", "site_url": "https://seller.example", "version": "v",
+        "evidence": {"business_id": "a", "subject": "a", "claims": [claim]},
+    })
+    return draft, source
+
+
+def test_dna_allows_empty_geography_and_categories_as_unknowns():
+    draft, source = _service_only_draft()
+    assert draft.service_country == "US"
+    dna = draft.assemble((source,))
+    dna.validate_grounding()
+    assert dna.services == ("svc",)
+    assert dna.geography == ()
+    assert dna.customer_categories == ()
+    assert dna.service_country == "US"
+    assert "geography" in dna.unknowns
+    assert "customer_categories" in dna.unknowns
+
+
+def test_dna_empty_services_still_rejected():
+    draft, source = _service_only_draft(slots=("geography", "customer_category"))
+    with pytest.raises(ValidationError) as raised:
+        draft.assemble((source,))
+    locs = [tuple(item["loc"]) for item in raised.value.errors()]
+    assert ("services",) in locs
+    assert all(item["type"] == "too_short" for item in raised.value.errors() if item["loc"] == ("services",))
+
+
+def test_dna_invented_quote_is_still_rejected_without_geography():
+    draft, source = _service_only_draft(quote="INVENTED_QUOTE_NOT_ON_PAGE")
+    with pytest.raises(ValidationError) as raised:
+        draft.assemble((source,))
+    assert any(item["type"] == "value_error" for item in raised.value.errors())
+
+
+def test_dna_prompt_and_cache_version_is_dna_3():
+    from evorove_lead.business_dna import DNA_PROMPT_VERSION
+    from evorove_lead.research_runtime import DNA_CACHE_KIND
+    assert DNA_PROMPT_VERSION == "dna-3"
+    assert DNA_CACHE_KIND == "dna-3-provenance"
+    assert BusinessDNA.version_for("same") != BusinessDNA.version_for("same", "dna-2")
+
+
+def test_buyer_queries_from_dna_tolerate_empty_categories():
+    draft, source = _service_only_draft()
+    dna = draft.assemble((source,))
+    assert buyer_queries_from_dna(dna) == ()
