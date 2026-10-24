@@ -236,7 +236,12 @@ def test_flush_counts_pending_without_crm_connection(monkeypatch, tmp_path) -> N
     monkeypatch.delenv("CRM_BASE_URL", raising=False)
     store.record_failure("tenant-a", TOUCH_ID, PAYLOAD, "down", NOW)
 
-    assert flush_crm_deliveries_from_env() == {"redelivered": 0, "pending": 1}
+    assert flush_crm_deliveries_from_env() == {
+        "redelivered": 0,
+        "pending": 1,
+        "accepted_cold": 0,
+        "blocked_reason": "",
+    }
 
 
 def test_flush_redelivers_through_the_real_http_path(monkeypatch, tmp_path) -> None:
@@ -244,12 +249,15 @@ def test_flush_redelivers_through_the_real_http_path(monkeypatch, tmp_path) -> N
     monkeypatch.setenv("DATABASE_URL", url)
     monkeypatch.setenv("CRM_BASE_URL", "http://127.0.0.1:9")  # discard port: always refused
     monkeypatch.setenv("INTERNAL_TASK_SECRET", "local_development_only")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
     store.record_failure("tenant-a", TOUCH_ID, PAYLOAD, "down", NOW)
 
     result = flush_crm_deliveries_from_env()
 
     assert result["redelivered"] == 0
     assert result["pending"] == 1
+    assert result["accepted_cold"] == 0
     assert store.pending()[0].attempts == 2  # the retry was recorded, not swallowed
 
 
@@ -276,7 +284,7 @@ def test_api_status_counts_pending_deliveries() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"pending": 1}
+    assert response.json() == {"pending": 1, "cycle2_isolated": False}
 
 
 def test_api_flush_retries_queued_touches(monkeypatch) -> None:
@@ -290,9 +298,14 @@ def test_api_flush_retries_queued_touches(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    # CRM unreachable: nothing redelivered, the failed retry stays queued and counted.
-    assert response.json() == {"redelivered": 0, "pending": 1}
-    assert store.pending()[0].attempts == 2
+    # Working CRM is not contacted until the operator isolates cycle 2.
+    assert response.json() == {
+        "redelivered": 0,
+        "pending": 1,
+        "accepted_cold": 0,
+        "blocked_reason": "crm_cycle2_not_isolated",
+    }
+    assert store.pending()[0].attempts == 1
 
 
 def test_api_delivery_endpoints_require_the_secret() -> None:

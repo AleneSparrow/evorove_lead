@@ -41,6 +41,7 @@ def research_pipeline_from_env(warehouse, search_client, *, dry_run=None):
     from evorove_lead.research_runtime import ResearchPipeline
     limits = BudgetLimits.model_validate_json(os.getenv("RESEARCH_BUDGET_JSON", "{}"))
     completion = AnthropicResearchCompletion(key, model, timeout_seconds=int(os.getenv("RESEARCH_LLM_TIMEOUT_SECONDS", "45")))
+    from evorove_lead.crm_touch import crm_delivery_requested
     return ResearchPipeline(warehouse.database_engine, search_client, completion, limits=limits,
-                            dry_run=(os.getenv("RESEARCH_CRM_DELIVERY") != "1") if dry_run is None else dry_run, model=model,
+                            dry_run=(not crm_delivery_requested()) if dry_run is None else dry_run, model=model,
                             max_output_tokens=int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "2000")), input_rate=float(rates[0]), output_rate=float(rates[1]))

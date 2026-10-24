@@ -93,6 +93,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     delivery = flush_crm_deliveries_from_env()
     summary["crm_redelivered"] = delivery["redelivered"]
     summary["crm_pending"] = delivery["pending"]
+    summary["crm_accepted_cold"] = delivery.get("accepted_cold", 0)
+    summary["crm_blocked_reason"] = delivery.get("blocked_reason", "")
     json.dump(summary, sys.stdout)
     sys.stdout.write("\n")
     return 2 if result.status.value in {"failed", "partial", "budget_exhausted"} else 0

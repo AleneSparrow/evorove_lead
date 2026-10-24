@@ -28,10 +28,58 @@ PERSON_ID_PREFIX = "ppl_"
 EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 LOGGER = logging.getLogger(__name__)
+CYCLE2_ISOLATED_ENV = "CRM_CYCLE2_ISOLATED"
+ACCEPT_BODY_LIMIT = 65_536
 
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def crm_cycle2_isolated() -> bool:
+    """Operator confirms the target CRM has no cycle-2 command delivery."""
+
+    return os.getenv(CYCLE2_ISOLATED_ENV) == "1"
+
+
+def crm_delivery_requested() -> bool:
+    """Live Cold writes need both the delivery flag and cycle-2 isolation."""
+
+    return os.getenv("RESEARCH_CRM_DELIVERY") == "1" and crm_cycle2_isolated()
+
+
+@dataclass(frozen=True)
+class CrmAcceptReceipt:
+    """What CRM reported after accepting a touch. Not a handoff count."""
+
+    touch_id: str
+    person_id: str
+    tab: str
+    duplicate: bool
+
+    @property
+    def confirmed_cold(self) -> bool:
+        return self.tab == "cold"
+
+
+def parse_accept_receipt(raw: bytes) -> CrmAcceptReceipt | None:
+    try:
+        body = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeError):
+        return None
+    if not isinstance(body, dict):
+        return None
+    person_id = str(body.get("person_id") or "").strip()
+    tab = str(body.get("tab") or "").strip()
+    touch_id = str(body.get("touch_id") or "").strip()
+    if not person_id or not tab:
+        return None
+    return CrmAcceptReceipt(
+        touch_id=touch_id,
+        person_id=person_id,
+        tab=tab,
+        duplicate=bool(body.get("duplicate")),
+    )
 
 
 class CrmDeliveryError(Exception):
@@ -56,13 +104,24 @@ class RecordingLeadTouchSink:
 
 
 class HttpCrmLeadTouchSink:
-    """Pure HTTP transport: POST one touch to CRM. Raises `CrmDeliveryError`."""
+    """Pure HTTP transport: POST one touch to CRM. Raises `CrmDeliveryError`.
+
+    A 2xx without `person_id` and `tab` is not a confirmed board write.
+    Without `CRM_CYCLE2_ISOLATED=1` no request is sent: working CRM would
+    emit `cold_assigned` and cycle 2 may write to the person.
+    """
 
     def __init__(self, base_url: str, secret: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._secret = secret
+        self.last_receipt: CrmAcceptReceipt | None = None
 
     def publish(self, business_id: str, payload: dict[str, object]) -> None:
+        self.last_receipt = None
+        if not crm_delivery_requested():
+            raise CrmDeliveryError(
+                "crm_cycle2_not_isolated" if not crm_cycle2_isolated() else "crm_delivery_not_enabled"
+            )
         url = f"{self._base_url}/api/v1/internal/businesses/{business_id}/lead-touches"
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -75,9 +134,19 @@ class HttpCrmLeadTouchSink:
             },
         )
         try:
-            urllib.request.urlopen(request, timeout=5).close()
+            with urllib.request.urlopen(request, timeout=5) as response:
+                status = getattr(response, "status", 200)
+                raw = response.read(ACCEPT_BODY_LIMIT + 1)
+        except urllib.error.HTTPError as exc:
+            raise CrmDeliveryError(f"POST {url} failed: HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
             raise CrmDeliveryError(f"POST {url} failed: {exc}") from exc
+        if status not in {200, 201, 202} or len(raw) > ACCEPT_BODY_LIMIT:
+            raise CrmDeliveryError("crm_accept_unconfirmed")
+        receipt = parse_accept_receipt(raw)
+        if receipt is None:
+            raise CrmDeliveryError("crm_accept_unconfirmed")
+        self.last_receipt = receipt
 
 
 @dataclass(frozen=True)
@@ -214,6 +283,8 @@ class OutboxCrmLeadTouchSink:
         try:
             self._http.publish(business_id, payload)
         except CrmDeliveryError as exc:
+            if str(exc) in {"crm_cycle2_not_isolated", "crm_delivery_not_enabled"}:
+                return
             self._store.record_failure(business_id, touch_id, payload, str(exc), self._clock())
             LOGGER.warning(
                 "crm touch not delivered, queued for retry: business_id=%s touch_id=%s error=%s",
@@ -256,6 +327,38 @@ def redeliver_pending(
         store.remove(record.business_id, record.touch_id)
         redelivered += 1
     return redelivered, store.pending_count()
+
+
+def delivery_counts(redelivered: int, pending: int, *, accepted_cold: int = 0, blocked_reason: str = "") -> dict[str, object]:
+    return {
+        "redelivered": redelivered,
+        "pending": pending,
+        "accepted_cold": accepted_cold,
+        "blocked_reason": blocked_reason,
+    }
+
+
+def flush_deliveries(http: HttpCrmLeadTouchSink | None, store: CrmDeliveryStore, *, limit: int = 100) -> dict[str, object]:
+    """Flush or report why CRM was not contacted. Isolation is checked here, not after POST."""
+
+    pending = store.pending_count()
+    if http is None:
+        return delivery_counts(0, pending)
+    if not crm_delivery_requested():
+        reason = "crm_cycle2_not_isolated" if not crm_cycle2_isolated() else "crm_delivery_not_enabled"
+        return delivery_counts(0, pending, blocked_reason=reason)
+    accepted_cold = 0
+
+    class _CountCold:
+        def publish(inner_self, business_id, payload):
+            http.publish(business_id, payload)
+            receipt = getattr(http, "last_receipt", None)
+            nonlocal accepted_cold
+            if receipt is not None and receipt.confirmed_cold:
+                accepted_cold += 1
+
+    redelivered, pending = redeliver_pending(_CountCold(), store, limit=limit)
+    return delivery_counts(redelivered, pending, accepted_cold=accepted_cold)
 
 
 def http_sink_from_env() -> HttpCrmLeadTouchSink | None:

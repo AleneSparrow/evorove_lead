@@ -16,8 +16,8 @@ from evorove_lead.crm_touch import (
     CrmDeliveryRecord,
     CrmDeliveryStore,
     NullCrmDeliveryStore,
+    flush_deliveries,
     http_sink_from_env,
-    redeliver_pending,
 )
 from evorove_lead.sqlalchemy_models import (
     Base,
@@ -454,16 +454,12 @@ def crm_delivery_store_from_env() -> CrmDeliveryStore:
     return SqlAlchemyCrmDeliveryStore(create_engine(database_url, future=True))
 
 
-def flush_crm_deliveries_from_env(*, limit: int = 100) -> dict[str, int]:
+def flush_crm_deliveries_from_env(*, limit: int = 100) -> dict[str, object]:
     """Retry every queued CRM touch. Counts only; never raises to the caller.
 
     Runs even when people search is unconnected: a CRM outage yesterday
-    should not wait on a working search to be repaired.
+    should not wait on a working search to be repaired. Without cycle-2
+    isolation the queue is left untouched so a working CRM is not poked.
     """
 
-    store = crm_delivery_store_from_env()
-    http = http_sink_from_env()
-    redelivered = 0
-    if http is not None:
-        redelivered, _ = redeliver_pending(http, store, limit=limit)
-    return {"redelivered": redelivered, "pending": store.pending_count()}
+    return flush_deliveries(http_sink_from_env(), crm_delivery_store_from_env(), limit=limit)

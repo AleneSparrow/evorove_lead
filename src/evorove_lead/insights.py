@@ -266,7 +266,7 @@ def _research_section(warehouse, business_id):
         rows.append(f'<div class="card">{escape(str(run.get("started_at", "")))} · '
                     f'{escape(str(run.get("status", "unknown")))} · '
                     f'{"Dry run" if run.get("dry_run") else "CRM delivery enabled"} · '
-                    f'{int(run.get("qualified", 0))} qualified · {int(run.get("handoffs", 0))} queued for CRM'
+                    f'{int(run.get("qualified", 0))} qualified · {int(run.get("handoffs", 0))} handoffs (not confirmed Cold)'
                     f'<p>{escape(str(run.get("stop_reason", "")))}</p>'
                     f'<p>Queries: {int(usage.get("queries", 0))}; model calls: {int(usage.get("llm_calls", 0))}; '
                     f'estimated LLM cost: ${int(usage.get("cost_microusd", 0))/1000000:.4f}</p></div>')

@@ -92,7 +92,8 @@ def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int |
         search = hypothesis_search_from_env()
     except SearchError as exc:
         return {"status": "failed", "stop_reason": exc.code, "research_status": "failed", "research_stop_reason": exc.code,
-                "candidates": 0, "handoffs": 0, "rejected": 0, "messages_sent": 0, "crm_pending": 0, "crm_redelivered": 0}
+                "candidates": 0, "handoffs": 0, "rejected": 0, "messages_sent": 0, "crm_pending": 0, "crm_redelivered": 0,
+                "crm_accepted_cold": 0, "crm_blocked_reason": ""}
     if search is None:
         summary: dict[str, int | str] = {
             "status": "search_unconnected",
@@ -135,6 +136,8 @@ def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int |
     if research_dry_run:
         summary["crm_redelivered"] = 0
         summary["crm_pending"] = 0
+        summary["crm_accepted_cold"] = 0
+        summary["crm_blocked_reason"] = ""
         if search is not None and research is not None:
             summary["research_run_id"] = research.last_run["id"]
             summary["research_status"] = research.last_run["status"]
@@ -143,6 +146,8 @@ def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int |
     delivery = flush_crm_deliveries_from_env()
     summary["crm_redelivered"] = delivery["redelivered"]
     summary["crm_pending"] = delivery["pending"]
+    summary["crm_accepted_cold"] = delivery.get("accepted_cold", 0)
+    summary["crm_blocked_reason"] = delivery.get("blocked_reason", "")
     return summary
 
 
@@ -154,11 +159,17 @@ def preflight(*, probe_search=False):
         "research_enabled": os.getenv("RESEARCH_ENABLED") == "1",
         "paid_calls_authorized": os.getenv("RESEARCH_ALLOW_PAID_LLM") == "1",
         "delivery_enabled": os.getenv("RESEARCH_CRM_DELIVERY") == "1",
+        "cycle2_isolated": os.getenv("CRM_CYCLE2_ISOLATED") == "1",
+        "crm_configured": bool((os.getenv("CRM_BASE_URL") or "").strip() and (os.getenv("INTERNAL_TASK_SECRET") or "")),
         "search_probe": "not_run", "blockers": [],
     }
     if not report["search_configured"]: report["blockers"].append("WEB_SEARCH_BASE_URL is not configured")
     if not report["research_enabled"]: report["blockers"].append("research is not enabled")
     if not report["paid_calls_authorized"]: report["blockers"].append("paid LLM calls require separate authorization")
+    if report["delivery_enabled"] and not report["cycle2_isolated"]:
+        report["blockers"].append("CRM delivery requires CRM_CYCLE2_ISOLATED=1 on a CRM without cycle 2 handlers")
+    if report["crm_configured"] and not report["cycle2_isolated"]:
+        report["blockers"].append("configured CRM is not isolated from cycle 2")
     if probe_search and report["search_configured"]:
         from evorove_lead.web_search import SearchError
         try:

@@ -41,7 +41,7 @@ from evorove_lead.searches import (
 )
 from evorove_lead.web_search import WebSearchClient, client_from_env
 
-from evorove_lead.crm_touch import CrmDeliveryStore, http_sink_from_env, redeliver_pending
+from evorove_lead.crm_touch import CrmDeliveryStore, crm_cycle2_isolated, flush_deliveries, http_sink_from_env
 from evorove_lead.insights import register_insights_routes
 from evorove_lead.sqlalchemy_warehouse import crm_delivery_store_from_env, warehouse_from_env
 from evorove_lead.warehouse import AnalysisWarehouse, HypothesisOutcomeRecord, new_id
@@ -210,20 +210,19 @@ def create_app(
     @app.get("/api/v1/internal/crm-deliveries/status")
     def crm_delivery_status(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, object]:
         _require_task_secret(x_internal_task_secret)
-        return {"pending": deliveries.pending_count()}
+        return {
+            "pending": deliveries.pending_count(),
+            "cycle2_isolated": crm_cycle2_isolated(),
+        }
 
     @app.post("/api/v1/internal/crm-deliveries/flush")
     def crm_delivery_flush(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
-    ) -> dict[str, int]:
+    ) -> dict[str, object]:
         _require_task_secret(x_internal_task_secret)
-        http = http_sink_from_env()
-        redelivered = 0
-        if http is not None:
-            redelivered, _ = redeliver_pending(http, deliveries)
-        return {"redelivered": redelivered, "pending": deliveries.pending_count()}
+        return flush_deliveries(http_sink_from_env(), deliveries)
 
     @app.post("/api/v1/internal/hypothesis-outcomes", status_code=202)
     def record_hypothesis_outcome(

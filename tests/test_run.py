@@ -69,4 +69,6 @@ def test_run_without_a_people_source_stops_after_the_offer(dirs, capsys) -> None
         "rejected": [],
         "crm_redelivered": 0,
         "crm_pending": 0,
+        "crm_accepted_cold": 0,
+        "crm_blocked_reason": "",
     }
