@@ -130,6 +130,28 @@ def test_unread_client_site_is_brief_unavailable_not_no_fit(tmp_path):
     assert not crm.accepted and store.pending_count() == 0
 
 
+def test_provider_failure_before_search_is_failed_not_no_fit(tmp_path):
+    from evorove_lead.engine import GenerationStatus
+    from evorove_lead.market_intelligence import ResearchUnavailable
+
+    class Boom:
+        def complete_bounded(self, **kwargs):
+            raise ResearchUnavailable("research completion unavailable: HTTP 404 not_found_error")
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    pipeline.completion = Boom()
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert result.status is GenerationStatus.FAILED
+    assert result.status is not GenerationStatus.NO_FIT
+    assert result.stop_reason == "research completion unavailable: HTTP 404 not_found_error"
+    assert pipeline.last_run["status"] == "failed"
+    assert pipeline.last_run["stop_reason"] == "research completion unavailable: HTTP 404 not_found_error"
+    assert pipeline.last_run["failed_stage"] == "business_analysis"
+    assert pipeline.last_run["usage"]["queries"] == 0
+    assert pipeline.last_run["usage"]["llm_calls"] == 1
+    assert not crm.accepted and store.pending_count() == 0
+
+
 def test_completed_search_with_no_qualified_people_stays_no_fit(tmp_path):
     from evorove_lead.engine import GenerationStatus
 

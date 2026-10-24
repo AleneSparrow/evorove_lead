@@ -312,7 +312,15 @@ class ResearchPipeline:
             else:
                 state["status"], state["stop_reason"] = "insufficient_evidence", "PresenceRejected"
             state["failed_stage"] = failed_stage
-        except (ResearchUnavailable, OfferRejected, ValidationError, ValueError) as exc:
+        except ResearchUnavailable as exc:
+            failed_stage = state["stages"][-1] if state["stages"] else "business_analysis"
+            reason = str(exc).strip()[:200] or "ResearchUnavailable"
+            if failed_stage == "business_analysis" or not state.get("usage", {}).get("queries", 0):
+                state["status"], state["stop_reason"] = "failed", reason
+            else:
+                state["status"], state["stop_reason"] = "insufficient_evidence", reason
+            state["failed_stage"] = failed_stage
+        except (OfferRejected, ValidationError, ValueError) as exc:
             state["status"], state["stop_reason"] = "insufficient_evidence", type(exc).__name__
             state["failed_stage"] = state["stages"][-1]
         except BaseException as exc:

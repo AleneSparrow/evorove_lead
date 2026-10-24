@@ -2,10 +2,42 @@
 from __future__ import annotations
 import json
 import os
+import re
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from evorove_lead.llm_usage import CompletionReply
 from evorove_lead.market_intelligence import ResearchUnavailable
 from evorove_lead.research_budget import BudgetLimits
+
+_SAFE_TYPE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{0,63}$")
+_PROVIDER_TYPE = re.compile(r"[a-z0-9_]{1,64}$")
+
+
+def _provider_error_type(exc: HTTPError) -> str:
+    try:
+        payload = json.loads(exc.read(4000).decode() or "{}")
+    except Exception:
+        return ""
+    err = payload.get("error") if isinstance(payload, dict) else None
+    kind = err.get("type") if isinstance(err, dict) else None
+    return kind if isinstance(kind, str) and _PROVIDER_TYPE.fullmatch(kind) else ""
+
+
+def _safe_completion_failure(exc: BaseException) -> str:
+    if isinstance(exc, HTTPError):
+        detail = f"HTTP {exc.code}"
+        kind = _provider_error_type(exc)
+        if kind:
+            detail += f" {kind}"
+        return f"research completion unavailable: {detail}"
+    if isinstance(exc, TimeoutError):
+        return "research completion unavailable: timeout"
+    if isinstance(exc, URLError):
+        return "research completion unavailable: URLError"
+    name = type(exc).__name__
+    if not _SAFE_TYPE.fullmatch(name):
+        name = "error"
+    return f"research completion unavailable: {name}"
 
 class AnthropicResearchCompletion:
     def __init__(self, api_key, model, *, timeout_seconds=45):
@@ -18,8 +50,8 @@ class AnthropicResearchCompletion:
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 body = json.loads(response.read(2_000_000))
-        except Exception:
-            raise ResearchUnavailable("research completion unavailable") from None
+        except Exception as exc:
+            raise ResearchUnavailable(_safe_completion_failure(exc)) from None
         if body.get("stop_reason") == "max_tokens": raise ResearchUnavailable("truncated structured completion")
         usage = body.get("usage", {})
         if not isinstance(usage.get("input_tokens"), int) or not isinstance(usage.get("output_tokens"), int):
