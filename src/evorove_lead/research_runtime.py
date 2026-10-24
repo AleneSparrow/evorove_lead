@@ -39,8 +39,8 @@ from evorove_lead.crm_touch import assembled_touch, stable_person_id, RecordingL
 class ResearchPipeline:
     def __init__(self, db_engine, search_client, completion, *, limits=None, fetcher=None,
                  clock=utcnow, dry_run=True, model="configured", max_output_tokens=4000, input_rate=3., output_rate=15.,
-                 effort="low", qualify_effort="medium"):
-        from evorove_lead.research_config import require_research_effort
+                 effort="low", qualify_effort="medium", output_tokens_by_stage=None):
+        from evorove_lead.research_config import require_research_effort, DEFAULT_OUTPUT_TOKENS_BY_STAGE, output_tokens_for_stage
         self.store = IntelligenceStore(db_engine)
         self.cache = ResearchCache(db_engine, clock)
         self.delivery = ResearchDelivery(db_engine)
@@ -49,11 +49,13 @@ class ResearchPipeline:
         self.client, self.completion, self.fetcher = search_client, completion, fetcher or fetch_source_snapshot
         self.limits, self.clock, self.dry_run = limits or BudgetLimits(), clock, dry_run
         self.model, self.max_output_tokens = model, max_output_tokens
+        self.output_tokens_by_stage = dict(output_tokens_by_stage or DEFAULT_OUTPUT_TOKENS_BY_STAGE)
         self.input_rate, self.output_rate = input_rate, output_rate
         # low can weaken candidate judgment. Qualification stays on medium.
         self.effort = require_research_effort(effort, name="effort")
         self.qualify_effort = require_research_effort(qualify_effort, name="qualify_effort")
         self.last_run = None
+        self._tokens_for = lambda stage: output_tokens_for_stage(stage, self.output_tokens_by_stage, self.max_output_tokens)
 
     def generate(self, engine, seed, *, extra_hypotheses=()):
         from evorove_lead.engine import GenerationResult, GenerationStatus, RejectedHit, _brief_record
@@ -68,7 +70,7 @@ class ResearchPipeline:
             raise ResearchUnavailable("research requires run ownership")
         run_id = owner.run_id
         now = self.clock()
-        state = {"id": run_id, "started_at": now.isoformat(), "dry_run": self.dry_run, "status": "running", "stages": [], "limits": self.limits.model_dump(), "usage": {}}
+        state = {"id": run_id, "started_at": now.isoformat(), "dry_run": self.dry_run, "status": "running", "stages": [], "limits": self.limits.model_dump(), "usage": {}, "people_queries": 0}
         self.last_run = state
         def save(): self.store.save(seed.business_id, "run", run_id, state)
         def stage(name): state["stages"].append(name); save()
@@ -77,8 +79,8 @@ class ResearchPipeline:
         budgeted = dict(completion=self.completion, budget=budget, ledger=self.ledger, run_id=run_id, model=self.model,
                         max_output_tokens=self.max_output_tokens, input_usd_per_million=self.input_rate,
                         output_usd_per_million=self.output_rate)
-        reasoner = StructuredReasoner(BudgetedCompletion(**budgeted, effort=self.effort))
-        qualify_reasoner = StructuredReasoner(BudgetedCompletion(**budgeted, effort=self.qualify_effort))
+        reasoner = StructuredReasoner(BudgetedCompletion(**budgeted, effort=self.effort), output_tokens_for=self._tokens_for)
+        qualify_reasoner = StructuredReasoner(BudgetedCompletion(**budgeted, effort=self.qualify_effort), output_tokens_for=self._tokens_for)
         search = BudgetedSearch(self.client, budget)
         offer = None
         accepted, handoffs, rejected = [], [], []
@@ -131,7 +133,7 @@ class ResearchPipeline:
             cached_market = self.cache.get(seed.business_id, market_key)
             market = MarketIntelligenceReport.model_validate(cached_market) if cached_market else MarketResearchEngine(reasoner, search, retrieve).research(dna, research_hints=hints)
             market.validate_grounding(seed.business_id, market.evidence.sources)
-            if not cached_market and not search.errors:
+            if not cached_market:
                 self.cache.put(seed.business_id, market_key, market.model_dump(mode="json"), timedelta(days=7))
             self.store.save_evidence(market.evidence)
             market_id = digest(market.model_dump_json())
@@ -177,6 +179,7 @@ class ResearchPipeline:
                             continue
                         if query_count >= allocation[h.stable_key]: break
                         query_count += 1
+                        state["people_queries"] = state.get("people_queries", 0) + 1
                         # Discovery mode reuses the existing per-hypothesis connector,
                         # but defers contact/LLM work until company deduplication.
                         connector = WebSearchPeopleSearch(search)
@@ -323,7 +326,7 @@ class ResearchPipeline:
             if failed_stage == "business_analysis":
                 state["status"], state["stop_reason"] = "failed", "brief_unavailable"
             else:
-                state["status"], state["stop_reason"] = "insufficient_evidence", "PresenceRejected"
+                state["status"], state["stop_reason"] = "failed", "PresenceRejected"
             state["failed_stage"] = failed_stage
         except ResearchUnavailable as exc:
             failed_stage = state["stages"][-1] if state["stages"] else "business_analysis"
@@ -331,10 +334,7 @@ class ResearchPipeline:
             if isinstance(exc, InvalidStructuredCompletion):
                 self.ledger.record(seed.business_id, run_id, {"status": "validation_failed", **exc.summary})
                 state["validation"] = exc.summary
-            if failed_stage == "business_analysis" or not state.get("usage", {}).get("queries", 0):
-                state["status"], state["stop_reason"] = "failed", reason
-            else:
-                state["status"], state["stop_reason"] = "insufficient_evidence", reason
+            state["status"], state["stop_reason"] = "failed", reason
             state["failed_stage"] = failed_stage
         except (OfferRejected, ValidationError, ValueError) as exc:
             failed_stage = state["stages"][-1] if state["stages"] else "business_analysis"
@@ -345,10 +345,7 @@ class ResearchPipeline:
                 reason = format_validation_stop_reason(summary)
             else:
                 reason = safe_runtime_reason(exc)
-            if failed_stage == "business_analysis" or not state.get("usage", {}).get("queries", 0):
-                state["status"], state["stop_reason"] = "failed", reason
-            else:
-                state["status"], state["stop_reason"] = "insufficient_evidence", reason
+            state["status"], state["stop_reason"] = "failed", reason
             state["failed_stage"] = failed_stage
         except BaseException as exc:
             state["status"], state["stop_reason"] = ("failed", "dependency_failure") if isinstance(exc, Exception) else ("interrupted", "cancelled")
@@ -362,7 +359,7 @@ class ResearchPipeline:
                 if state["status"] not in {"failed", "budget_exhausted"}:
                     state["status"] = "budget_exhausted" if search.errors[-1].code == "search_request_limit" else "partial" if search.successes else "failed"
             try:
-                if state["status"] in {"completed", "partial", "budget_exhausted", "insufficient_evidence"} or (state["status"] == "failed" and search.errors):
+                if state["status"] in {"completed", "partial", "budget_exhausted"} or (state["status"] == "failed" and (search.errors or ranked)):
                     for _, record, payload, candidate, handoff, hypothesis_key, decision_id, claim_ids in sorted(ranked, key=lambda item: (-item[0], item[3].identity)):
                         if self.dry_run:
                             self.store.save(seed.business_id, "dry_run_qualified", record.id, {"hypothesis_id": record.hypothesis_id, "qualification_id": decision_id})
@@ -381,4 +378,14 @@ class ResearchPipeline:
                 state["qualified"] = len(accepted)
                 state["handoffs"] = len(handoffs)
                 save()
-        return GenerationResult(stop_reason=state.get("stop_reason", ""), status=GenerationStatus(state["status"]) if state["status"] in {"failed", "partial", "budget_exhausted"} else GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT, offer=offer, candidates=tuple(accepted), handoffs=tuple(handoffs), rejected=tuple(rejected))
+        people = int(state.get("people_queries") or 0)
+        run_status = state["status"]
+        if run_status in {"failed", "partial", "budget_exhausted"}:
+            result_status = GenerationStatus(run_status)
+        elif run_status == "completed" and people > 0:
+            result_status = GenerationStatus.PEOPLE_FOUND if accepted else GenerationStatus.NO_FIT
+        elif accepted:
+            result_status = GenerationStatus.PARTIAL
+        else:
+            result_status = GenerationStatus.FAILED
+        return GenerationResult(stop_reason=state.get("stop_reason", ""), status=result_status, offer=offer, candidates=tuple(accepted), handoffs=tuple(handoffs), rejected=tuple(rejected))

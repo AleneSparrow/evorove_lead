@@ -121,6 +121,8 @@ def test_explicit_budget_json_and_tariffs_are_accepted(monkeypatch):
     assert pipeline is not None
     assert pipeline.model == "claude-sonnet-5-5"
     assert pipeline.max_output_tokens == 4000
+    assert pipeline.output_tokens_by_stage["market_interpret"] == 8000
+    assert pipeline.output_tokens_by_stage["market_plan"] == 2000
     assert pipeline.effort == "low"
     assert pipeline.qualify_effort == "medium"
     assert pipeline.completion.timeout_seconds == 90
@@ -157,6 +159,20 @@ def test_from_env_forwards_explicit_effort_and_timeout(monkeypatch):
     assert pipeline.qualify_effort == "high"
     assert pipeline.max_output_tokens == 4000
     assert pipeline.completion.timeout_seconds == 90
+
+
+def test_stage_output_tokens_override_from_env(monkeypatch):
+    from evorove_lead.research_config import configured_output_tokens_by_stage, output_tokens_for_stage
+    mapping = configured_output_tokens_by_stage(4000)
+    assert mapping["market_interpret"] == 8000
+    assert output_tokens_for_stage("Interpret retrieved market evidence.", mapping, 4000) == 8000
+    assert output_tokens_for_stage("Plan research questions about demand", mapping, 4000) == 2000
+    assert output_tokens_for_stage("unknown stage", mapping, 4000) == 4000
+    monkeypatch.setenv("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE", '{"market_interpret": 9000}')
+    assert configured_output_tokens_by_stage(4000)["market_interpret"] == 9000
+    monkeypatch.setenv("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE", '{"invented": 1000}')
+    with pytest.raises(ResearchUnavailable, match="unknown stage"):
+        configured_output_tokens_by_stage(4000)
 
 
 def test_configured_timeout_is_forwarded_without_retry(monkeypatch):

@@ -86,8 +86,9 @@ def test_client_zero_uses_market_evidence_and_cached_report(monkeypatch, tmp_pat
     prefixes = ["Understand the business", "Plan research questions", "Interpret retrieved market", "Name buyers", "Extract claims", "Assess six", "Independently challenge"]
     assert [next(i for i, task in enumerate(tasks) if task.startswith(p)) for p in prefixes] == sorted(next(i for i, task in enumerate(tasks) if task.startswith(p)) for p in prefixes)
     planning = next(data for system, data in completion.inputs if "Task: Plan research questions" in system)
-    assert planning["dna"]["site_url"] == client_zero.CLIENT_ZERO_SITE
-    assert "Scheduling software" in planning["dna"]["evidence"]["claims"][0]["text"]
+    assert planning["dna"]["business_id"] == "pilot-a"
+    assert "evidence" not in planning["dna"]
+    assert any("scheduling software" in text.casefold() for text in planning["dna"]["services"])
     qualification = store.list("pilot-a", "qualification")[0]
     assert qualification["market_document_id"] == run["market_document_id"]
     assert qualification["gate"]["decision"] == "QUALIFIED"
@@ -153,7 +154,11 @@ def test_market_failure_stops_before_prospect_admission(tmp_path, failure):
         pipeline.limits = BudgetLimits(queries=0)
     result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
     assert not result.handoffs and not crm.accepted and delivery.pending_count() == 0
-    assert pipeline.last_run["status"] == ("budget_exhausted" if failure == "budget" else "insufficient_evidence")
+    assert pipeline.last_run["status"] == ("budget_exhausted" if failure == "budget" else "failed")
+    from evorove_lead.engine import GenerationStatus
+    if failure != "budget":
+        assert result.status is GenerationStatus.FAILED
+        assert result.status is not GenerationStatus.NO_FIT
     assert "hypothesis_generation" not in pipeline.last_run["stages"]
     assert "market_document_id" not in pipeline.last_run
     assert pipeline.last_run["usage"]["queries"] <= pipeline.limits.queries

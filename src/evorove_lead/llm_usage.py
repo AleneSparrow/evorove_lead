@@ -38,18 +38,19 @@ class BudgetedCompletion:
         self.model, self.pricing_version, self.effort = model, pricing_version, effort
         if min(self.input_rate, self.output_rate) < 0: raise ValueError("negative rate")
 
-    def complete(self, *, system, user):
+    def complete(self, *, system, user, max_tokens=None):
         # UTF-8 bytes plus framing is a conservative token upper bound for this
         # text-only endpoint. A provider must honor max_tokens on the request.
+        limit = self.max_output_tokens if max_tokens is None else max_tokens
         input_bound = len(system.encode()) + len(user.encode()) + 1024
-        reserved = dict(input_tokens=input_bound, output_tokens=self.max_output_tokens,
-                        cost_microusd=ceil(input_bound*self.input_rate + self.max_output_tokens*self.output_rate))
+        reserved = dict(input_tokens=input_bound, output_tokens=limit,
+                        cost_microusd=ceil(input_bound*self.input_rate + limit*self.output_rate))
         day = self.budget.consume(llm_calls=1, **reserved)
         event = {"model": self.model, "pricing_version": self.pricing_version, "reservation": reserved, "status": "reserved"}
         self.ledger.record(self.budget.business_id, self.run_id, event)
         try:
             from evorove_lead.run_ownership import guarded_call
-            reply = guarded_call(self.completion.complete_bounded, system=system, user=user, max_tokens=self.max_output_tokens, effort=self.effort)
+            reply = guarded_call(self.completion.complete_bounded, system=system, user=user, max_tokens=limit, effort=self.effort)
             actual = dict(input_tokens=reply.input_tokens, output_tokens=reply.output_tokens,
                           cost_microusd=ceil(reply.input_tokens*self.input_rate + reply.output_tokens*self.output_rate))
             if min(reply.input_tokens, reply.output_tokens) < 0: raise ValueError("invalid provider usage")

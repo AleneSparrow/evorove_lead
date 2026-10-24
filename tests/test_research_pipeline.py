@@ -163,6 +163,7 @@ def test_completed_search_with_no_qualified_people_stays_no_fit(tmp_path):
     assert result.handoffs == ()
     assert result.rejected
     assert pipeline.last_run["status"] == "completed"
+    assert pipeline.last_run["people_queries"] >= 1
     assert pipeline.last_run["usage"]["queries"] >= 1
     assert pipeline.client.queries
     assert not crm.accepted and store.pending_count() == 0
@@ -269,15 +270,44 @@ def test_qualification_uses_qualify_effort_other_stages_stay_low(tmp_path):
             self.efforts = []
         def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
             task = system.split("Task: ", 1)[1].split(". Schema:", 1)[0]
-            self.efforts.append((task, effort))
+            self.efforts.append((task, effort, max_tokens))
             return super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
     db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
     recorder = Recording()
     pipeline.completion = recorder
     engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
-    by_prefix = {task.split(".", 1)[0]: effort for task, effort in recorder.efforts}
-    assert by_prefix["Understand the business"] == "low"
-    assert by_prefix["Plan research questions about demand, alternatives and barriers for this business"] == "low"
-    assert by_prefix["Extract claims and a real appropriate person from the supplied sources"] == "low"
-    assert by_prefix["Assess six independent dimensions"] == "medium"
-    assert by_prefix["Independently challenge qualification"] == "medium"
+    by_prefix = {task.split(".", 1)[0]: (effort, tokens) for task, effort, tokens in recorder.efforts}
+    assert by_prefix["Understand the business"] == ("low", 4000)
+    assert by_prefix["Plan research questions about demand, alternatives and barriers for this business"] == ("low", 2000)
+    assert by_prefix["Interpret retrieved market evidence"] == ("low", 8000)
+    assert by_prefix["Extract claims and a real appropriate person from the supplied sources"] == ("low", 4000)
+    assert by_prefix["Assess six independent dimensions"] == ("medium", 4000)
+    assert by_prefix["Independently challenge qualification"] == ("medium", 4000)
+
+
+def test_truncated_market_interpret_is_failed_not_no_fit(tmp_path):
+    from evorove_lead.engine import GenerationStatus
+    from evorove_lead.market_intelligence import TruncatedStructuredCompletion
+
+    class TruncateInterpret(Completion):
+        def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
+            if "Interpret retrieved market" in system:
+                raise TruncatedStructuredCompletion({
+                    "stop_reason": "max_tokens", "input_tokens": 94171, "output_tokens": 4000,
+                    "thinking_tokens": 0, "text_chars": 12, "content_block_types": {"text": 1},
+                })
+            return super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    pipeline.completion = TruncateInterpret()
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert result.status is GenerationStatus.FAILED
+    assert result.status is not GenerationStatus.NO_FIT
+    assert result.stop_reason == "truncated structured completion"
+    assert pipeline.last_run["status"] == "failed"
+    assert pipeline.last_run["failed_stage"] == "market_research"
+    assert pipeline.last_run["people_queries"] == 0
+    assert "hypothesis_generation" not in pipeline.last_run["stages"]
+    assert "market_document_id" not in pipeline.last_run
+    assert pipeline.client.queries
+    assert not crm.accepted and store.pending_count() == 0

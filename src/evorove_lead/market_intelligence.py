@@ -88,8 +88,9 @@ def _decode_model_text(raw: str) -> str:
 
 class StructuredReasoner:
     """No tools or credentials are exposed to the model. All web text is data."""
-    def __init__(self, completion):
+    def __init__(self, completion, *, output_tokens_for=None):
         self.completion = completion
+        self.output_tokens_for = output_tokens_for
 
     def ask(self, stage: str, schema: type[T], data: dict) -> T:
         system = (
@@ -101,12 +102,17 @@ class StructuredReasoner:
             f"Task: {stage}. Schema: {json.dumps(schema.model_json_schema())}"
         )
         user = json.dumps(data, ensure_ascii=False)
+        limit = self.output_tokens_for(stage) if self.output_tokens_for else None
+        def complete(payload):
+            if limit is None:
+                return self.completion.complete(system=system, user=payload)
+            return self.completion.complete(system=system, user=payload, max_tokens=limit)
         try:
-            return schema.model_validate_json(_decode_model_text(self.completion.complete(system=system, user=user)))
+            return schema.model_validate_json(_decode_model_text(complete(user)))
         except ValidationError as first:
             repair = json.dumps({"previous_output_invalid": True, "validation": safe_validation_summary(first, schema.__name__), "data": data}, ensure_ascii=False)
             try:
-                return schema.model_validate_json(_decode_model_text(self.completion.complete(system=system, user=repair)))
+                return schema.model_validate_json(_decode_model_text(complete(repair)))
             except ValidationError as second:
                 raise InvalidStructuredCompletion(safe_validation_summary(second, schema.__name__)) from None
 
@@ -215,34 +221,65 @@ class BusinessDNAEngine:
         return dna
 
 
+MARKET_INTERPRET_MAX_PAGES = 5
+MARKET_INTERPRET_PAGE_CHARS = 5000
+MARKET_BRIEF_FIELDS = ("services", "customer_categories", "geography", "positioning", "unknowns")
+
+
+def market_brief(dna: BusinessDNA) -> dict:
+    claims = {claim.id: claim.text for claim in dna.evidence.claims}
+    def texts(field):
+        if field == "unknowns":
+            return list(dna.unknowns)
+        return [claims[ref] for ref in getattr(dna, field) if claims.get(ref)]
+    return {
+        "business_id": dna.business_id,
+        "service_country": dna.service_country,
+        **{field: texts(field) for field in MARKET_BRIEF_FIELDS},
+    }
+
+
+def clip_market_source(source: SourceSnapshot, max_chars=MARKET_INTERPRET_PAGE_CHARS) -> SourceSnapshot:
+    if len(source.content) <= max_chars:
+        return source
+    payload = source.model_dump(mode="json")
+    payload["content"] = source.content[:max_chars]
+    payload["content_hash"] = ""
+    return SourceSnapshot.model_validate(payload)
+
+
 class MarketResearchEngine:
     def __init__(self, reasoner, search_client, retrieve):
         self.reasoner, self.search_client, self.retrieve = reasoner, search_client, retrieve
 
     def research(self, dna: BusinessDNA, *, research_hints=()) -> MarketIntelligenceReport:
-        questions = self.reasoner.ask("Plan research questions about demand, alternatives and barriers for this business.", ResearchQuestions, {"dna": dna.model_dump(mode="json"), "unverified_research_hints": list(research_hints)})
+        questions = self.reasoner.ask("Plan research questions about demand, alternatives and barriers for this business.", ResearchQuestions, {"dna": market_brief(dna), "unverified_research_hints": list(research_hints)})
         sources = []
         seen = set()
         from evorove_lead.web_search import SearchError
         failure = None
         for query in dict.fromkeys(questions.queries):
+            if len(sources) >= MARKET_INTERPRET_MAX_PAGES:
+                break
             try:
                 hits = self.search_client.search(query)
             except SearchError as exc:
                 failure = exc
                 continue
             for hit in hits:
+                if len(sources) >= MARKET_INTERPRET_MAX_PAGES:
+                    break
                 if hit.url in seen:
                     continue
                 seen.add(hit.url)
                 source = self.retrieve(hit.url, "market")
                 if source is not None:
-                    sources.append(source)
+                    sources.append(clip_market_source(source))
         if not sources:
             if failure is not None:
                 raise failure
             raise ResearchUnavailable("market research returned no retrieved evidence")
-        draft = self.reasoner.ask("Interpret retrieved market evidence. Each claim has slots for the conclusions it supports. Priorities are research suggestions, not facts.", MarketReportModelDraft, {"dna": dna.model_dump(mode="json"), "sources": [s.model_dump(mode="json") for s in sources]})
+        draft = self.reasoner.ask("Interpret retrieved market evidence. Each claim has slots for the conclusions it supports. Priorities are research suggestions, not facts.", MarketReportModelDraft, {"dna": market_brief(dna), "sources": [s.model_dump(mode="json") for s in sources]})
         report = draft.assemble(tuple(sources))
         report.validate_grounding(dna.business_id, tuple(sources))
         return report

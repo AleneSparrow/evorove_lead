@@ -14,6 +14,57 @@ _PROVIDER_TYPE = re.compile(r"[a-z0-9_]{1,64}$")
 _BLOCK_TYPE = re.compile(r"[a-z0-9_]{1,32}$")
 _STOP_REASON = re.compile(r"[A-Za-z0-9_]{1,64}$")
 ALLOWED_RESEARCH_EFFORT = ("low", "medium", "high")
+DEFAULT_OUTPUT_TOKENS_BY_STAGE = {
+    "business_analysis": 4000,
+    "market_plan": 2000,
+    "market_interpret": 8000,
+    "hypotheses": 4000,
+    "extract": 4000,
+    "qualify": 4000,
+    "adversarial": 4000,
+}
+_STAGE_PREFIXES = (
+    ("Understand the business", "business_analysis"),
+    ("Plan research questions", "market_plan"),
+    ("Interpret retrieved market", "market_interpret"),
+    ("Name buyers", "hypotheses"),
+    ("Extract claims", "extract"),
+    ("Re-extract evidence", "extract"),
+    ("Assess six", "qualify"),
+    ("Independently challenge", "adversarial"),
+)
+_STAGE_KEY = re.compile(r"[a-z_]{1,32}$")
+
+
+def configured_output_tokens_by_stage(default=4000) -> dict[str, int]:
+    mapping = dict(DEFAULT_OUTPUT_TOKENS_BY_STAGE)
+    raw = os.getenv("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE")
+    if raw is None or raw.strip() == "":
+        return mapping
+    try:
+        extra = json.loads(raw)
+    except ValueError:
+        raise ResearchUnavailable("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE must be JSON") from None
+    if not isinstance(extra, dict):
+        raise ResearchUnavailable("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE must be a JSON object")
+    for key, value in extra.items():
+        if not isinstance(key, str) or not _STAGE_KEY.fullmatch(key) or key not in DEFAULT_OUTPUT_TOKENS_BY_STAGE:
+            raise ResearchUnavailable("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE has an unknown stage")
+        try:
+            tokens = int(value)
+        except (TypeError, ValueError):
+            raise ResearchUnavailable("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE values must be integers") from None
+        if not 256 <= tokens <= 32_000:
+            raise ResearchUnavailable("RESEARCH_MAX_OUTPUT_TOKENS_BY_STAGE values must be between 256 and 32000")
+        mapping[key] = tokens
+    return mapping
+
+
+def output_tokens_for_stage(stage: str, mapping: dict[str, int], default=4000) -> int:
+    for prefix, key in _STAGE_PREFIXES:
+        if stage.startswith(prefix):
+            return mapping.get(key, default)
+    return default
 
 
 def require_research_effort(value, *, name="effort"):
@@ -171,6 +222,7 @@ def research_pipeline_from_env(warehouse, search_client, *, dry_run=None):
         warehouse.database_engine, search_client, completion, limits=limits,
         dry_run=(not crm_delivery_requested()) if dry_run is None else dry_run, model=model,
         max_output_tokens=int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "4000")),
+        output_tokens_by_stage=configured_output_tokens_by_stage(int(os.getenv("RESEARCH_MAX_OUTPUT_TOKENS", "4000"))),
         input_rate=float(rates[0]), output_rate=float(rates[1]),
         effort=effort, qualify_effort=qualify_effort,
     )
