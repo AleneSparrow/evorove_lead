@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import hmac
 import os
+import time
 from datetime import datetime, timezone
 from typing import Annotated, Callable, Literal
 
@@ -42,6 +43,7 @@ from evorove_lead.searches import (
 from evorove_lead.web_search import WebSearchClient, client_from_env
 
 from evorove_lead.crm_touch import CrmDeliveryStore, crm_cycle2_isolated, flush_deliveries, http_sink_from_env
+from evorove_lead.lead_feedback import FEEDBACK_KINDS, apply_feedback
 from evorove_lead.insights import register_insights_routes
 from evorove_lead.sqlalchemy_warehouse import crm_delivery_store_from_env, warehouse_from_env
 from evorove_lead.warehouse import AnalysisWarehouse, HypothesisOutcomeRecord, new_id
@@ -64,6 +66,25 @@ def _require_task_secret(provided: str | None) -> None:
         raise HTTPException(status_code=401, detail="internal task endpoints are not enabled")
     if not provided or not hmac.compare_digest(provided, configured):
         raise HTTPException(status_code=401, detail="invalid or missing internal task secret")
+
+
+class LeadFeedbackIn(BaseModel):
+    business_id: str = Field(min_length=1, max_length=128)
+    qualification_id: str = Field(min_length=1, max_length=128)
+    kind: str = Field(min_length=1, max_length=32)
+
+
+class _RateLimiter:
+    def __init__(self, per_minute: int) -> None:
+        self.per_minute = per_minute
+        self._hits: list[float] = []
+
+    def check(self) -> None:
+        now = time.monotonic()
+        self._hits = [stamp for stamp in self._hits if now - stamp < 60]
+        if len(self._hits) >= self.per_minute:
+            raise HTTPException(status_code=429, detail="rate limit")
+        self._hits.append(now)
 
 
 class SearchRequestIn(BaseModel):
@@ -91,6 +112,7 @@ def create_app(
     signal_store: MarketSignalStore | None = None,
     signal_web_search_client_factory: Callable[[], WebSearchClient | None] = client_from_env,
     signal_llm_factory: Callable[[], MarketSignalCompletion | None] = market_signal_completion_from_env,
+    rate_limit_per_minute: int = 600,
 ) -> FastAPI:
     app = FastAPI(title="evorove_lead internal API")
     store = warehouse if warehouse is not None else warehouse_from_env()
@@ -98,7 +120,15 @@ def create_app(
     deliveries = delivery_store if delivery_store is not None else crm_delivery_store_from_env()
     signals = signal_store if signal_store is not None else market_signal_store_from_env()
     make_engine = engine_factory or live_engine
+    limiter = _RateLimiter(rate_limit_per_minute)
     register_insights_routes(app, store)
+
+    @app.get("/health")
+    def health() -> dict[str, str]:
+        return {"status": "ok", "service": "evorove_lead"}
+
+    def _limited() -> None:
+        limiter.check()
 
     def _engine_or_503():
         from evorove_lead.web_search import SearchError
@@ -151,6 +181,7 @@ def create_app(
         background: BackgroundTasks,
         x_internal_task_secret: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
+        _limited()
         _require_task_secret(x_internal_task_secret)
         try:
             site_url = validate_public_http_url(body.site_url)
@@ -183,6 +214,7 @@ def create_app(
         business_id: str,
         x_internal_task_secret: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
+        _limited()
         _require_task_secret(x_internal_task_secret)
         recover_targets(search_targets)
         target = search_targets.get(business_id)
@@ -194,6 +226,7 @@ def create_app(
     def run_due_searches(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
+        _limited()
         _require_task_secret(x_internal_task_secret)
         return run_due(search_targets, _engine_or_503())
 
@@ -203,6 +236,7 @@ def create_app(
     ) -> dict[str, object]:
         """Track 4's own daily cron entry point -- see run_due_market_signals."""
 
+        _limited()
         _require_task_secret(x_internal_task_secret)
         client, llm = _market_signal_deps_or_503()
         return run_due_market_signals(search_targets, signals, client, llm, _engine_or_503())
@@ -211,6 +245,7 @@ def create_app(
     def crm_delivery_status(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
+        _limited()
         _require_task_secret(x_internal_task_secret)
         return {
             "pending": deliveries.pending_count(),
@@ -221,6 +256,7 @@ def create_app(
     def crm_delivery_flush(
         x_internal_task_secret: Annotated[str | None, Header()] = None,
     ) -> dict[str, object]:
+        _limited()
         _require_task_secret(x_internal_task_secret)
         return flush_deliveries(http_sink_from_env(), deliveries)
 
@@ -229,6 +265,7 @@ def create_app(
         body: HypothesisOutcomeIn,
         x_internal_task_secret: Annotated[str | None, Header()] = None,
     ) -> dict[str, str]:
+        _limited()
         _require_task_secret(x_internal_task_secret)
         if not body.business_id.strip() or not body.hypothesis_id.strip() or not body.case_id.strip():
             raise HTTPException(status_code=422, detail="business_id, hypothesis_id, and case_id are required")
@@ -242,6 +279,27 @@ def create_app(
         )
         store.save_hypothesis_outcome(record)
         return {"status": "recorded", "id": record.id}
+
+    @app.post("/api/v1/internal/lead-feedback", status_code=202)
+    def record_lead_feedback(
+        body: LeadFeedbackIn,
+        x_internal_task_secret: Annotated[str | None, Header()] = None,
+    ) -> dict[str, object]:
+        _limited()
+        _require_task_secret(x_internal_task_secret)
+        if body.kind not in FEEDBACK_KINDS:
+            raise HTTPException(status_code=422, detail="unknown feedback kind")
+        saved = apply_feedback(
+            store,
+            business_id=body.business_id,
+            qualification_id=body.qualification_id,
+            kind=body.kind,
+        )
+        return {
+            "status": "recorded",
+            "id": saved.id,
+            "budget_delta": saved.budget_delta,
+        }
 
     return app
 

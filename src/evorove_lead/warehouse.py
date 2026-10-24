@@ -115,6 +115,63 @@ class HypothesisOutcomeRecord:
     recorded_at: datetime
 
 
+@dataclass(frozen=True)
+class QualificationRecord:
+    """Warehouse copy of one classification. Historical rows are not rewritten."""
+
+    id: str
+    business_id: str
+    hypothesis_id: str
+    trace_id: str
+    source_url: str
+    content_sha256: str
+    query_template: str
+    segment: str
+    intent_class: str
+    entity_type: str
+    problem: str
+    icp_match: bool
+    evidence_quote: str
+    evidence_verified: bool
+    publication_date: str
+    confidence: float
+    commercial_relevance: str
+    recommended_action: str
+    reasoning_summary: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd_micros: int
+    cache_hit: bool
+    blocked_reason: str
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class FeedbackRecord:
+    id: str
+    business_id: str
+    qualification_id: str
+    hypothesis_id: str
+    query_template: str
+    kind: str
+    budget_delta: int
+    created_at: datetime
+
+
+@dataclass(frozen=True)
+class LlmUsageRecord:
+    id: str
+    business_id: str
+    model: str
+    input_tokens: int
+    output_tokens: int
+    cost_usd_micros: int
+    cache_hit: bool
+    blocked_reason: str
+    created_at: datetime
+
+
 class AnalysisWarehouse(Protocol):
     """Tenant-scoped store for cycle 1's own analysis, separate from CRM."""
 
@@ -149,6 +206,26 @@ class AnalysisWarehouse(Protocol):
     def list_hypothesis_outcomes(
         self, business_id: str, hypothesis_id: str
     ) -> Sequence[HypothesisOutcomeRecord]: ...
+
+    def save_qualification(self, record: QualificationRecord) -> QualificationRecord: ...
+
+    def list_qualifications(self, business_id: str) -> Sequence[QualificationRecord]: ...
+
+    def get_qualification(self, business_id: str, qualification_id: str) -> QualificationRecord | None: ...
+
+    def find_qualification_by_sha(
+        self, business_id: str, content_sha256: str
+    ) -> QualificationRecord | None: ...
+
+    def save_feedback(self, record: FeedbackRecord) -> None: ...
+
+    def list_feedback(self, business_id: str) -> Sequence[FeedbackRecord]: ...
+
+    def suppressed_queries(self, business_id: str) -> Sequence[str]: ...
+
+    def save_llm_usage(self, record: LlmUsageRecord) -> None: ...
+
+    def spent_micros(self, business_id: str | None = None) -> int: ...
 
 
 class NullAnalysisWarehouse:
@@ -197,6 +274,35 @@ class NullAnalysisWarehouse:
     ) -> Sequence[HypothesisOutcomeRecord]:
         return ()
 
+    def save_qualification(self, record: QualificationRecord) -> QualificationRecord:
+        return record
+
+    def list_qualifications(self, business_id: str) -> Sequence[QualificationRecord]:
+        return ()
+
+    def get_qualification(self, business_id: str, qualification_id: str) -> QualificationRecord | None:
+        return None
+
+    def find_qualification_by_sha(
+        self, business_id: str, content_sha256: str
+    ) -> QualificationRecord | None:
+        return None
+
+    def save_feedback(self, record: FeedbackRecord) -> None:
+        return None
+
+    def list_feedback(self, business_id: str) -> Sequence[FeedbackRecord]:
+        return ()
+
+    def suppressed_queries(self, business_id: str) -> Sequence[str]:
+        return ()
+
+    def save_llm_usage(self, record: LlmUsageRecord) -> None:
+        return None
+
+    def spent_micros(self, business_id: str | None = None) -> int:
+        return 0
+
 
 def _upsert(records: list, record) -> None:
     """Replace the row with the same `.id`, or append. Mirrors `session.merge`."""
@@ -218,6 +324,9 @@ class RecordingAnalysisWarehouse:
         self.rejected_traces: list[RejectedTraceRecord] = []
         self.candidates: list[CandidateRecord] = []
         self.hypothesis_outcomes: list[HypothesisOutcomeRecord] = []
+        self.qualifications: list[QualificationRecord] = []
+        self.feedback: list[FeedbackRecord] = []
+        self.llm_usage: list[LlmUsageRecord] = []
 
     def save_brief(self, record: BriefRecord) -> None:
         _upsert(self.briefs, record)
@@ -273,3 +382,54 @@ class RecordingAnalysisWarehouse:
             for r in self.hypothesis_outcomes
             if r.business_id == business_id and r.hypothesis_id == hypothesis_id
         )
+
+    def save_qualification(self, record: QualificationRecord) -> QualificationRecord:
+        for existing in self.qualifications:
+            if (
+                existing.business_id == record.business_id
+                and existing.source_url == record.source_url
+                and existing.content_sha256 == record.content_sha256
+            ):
+                return existing
+        self.qualifications.append(record)
+        return record
+
+    def list_qualifications(self, business_id: str) -> Sequence[QualificationRecord]:
+        return tuple(r for r in self.qualifications if r.business_id == business_id)
+
+    def get_qualification(self, business_id: str, qualification_id: str) -> QualificationRecord | None:
+        for record in self.qualifications:
+            if record.business_id == business_id and record.id == qualification_id:
+                return record
+        return None
+
+    def find_qualification_by_sha(
+        self, business_id: str, content_sha256: str
+    ) -> QualificationRecord | None:
+        for record in self.qualifications:
+            if record.business_id == business_id and record.content_sha256 == content_sha256:
+                return record
+        return None
+
+    def save_feedback(self, record: FeedbackRecord) -> None:
+        self.feedback.append(record)
+
+    def list_feedback(self, business_id: str) -> Sequence[FeedbackRecord]:
+        return tuple(r for r in self.feedback if r.business_id == business_id)
+
+    def suppressed_queries(self, business_id: str) -> Sequence[str]:
+        kinds = {"irrelevant", "incorrect_icp", "outdated"}
+        return tuple(
+            r.query_template
+            for r in self.feedback
+            if r.business_id == business_id and r.kind in kinds and r.query_template
+        )
+
+    def save_llm_usage(self, record: LlmUsageRecord) -> None:
+        self.llm_usage.append(record)
+
+    def spent_micros(self, business_id: str | None = None) -> int:
+        rows = self.llm_usage if business_id is None else [
+            row for row in self.llm_usage if row.business_id == business_id
+        ]
+        return sum(row.cost_usd_micros for row in rows)

@@ -28,6 +28,7 @@ from evorove_lead.presence import (
     public_urlopen,
     require_public_http_url,
 )
+from evorove_lead.result_collect import dedupe_hits
 
 SEARCH_TIMEOUT_SECONDS = 10
 
@@ -100,20 +101,44 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
 
 
 class HttpSearxngWebSearchClient:
-    """One HTTP attempt per call. BudgetedSearch alone owns transient retries."""
-    def __init__(self, base_url: str, opener=None, *, max_requests=30):
+    """One HTTP attempt per page. BudgetedSearch alone owns transient retries."""
+    def __init__(self, base_url: str, opener=None, *, max_pages: int = 1, max_requests=30):
         self._base_url = _validate_configured_base_url(base_url).rstrip("/")
         self._opener = opener or urlopen
+        self._max_pages = max(1, max_pages)
         self.max_requests, self.requests = max_requests, 0
         self._cache = {}
 
     def search(self, query: str) -> Sequence[SearchHit]:
-        if query in self._cache:
-            return self._cache[query]
+        key = " ".join((query or "").split())
+        if key in self._cache:
+            return self._cache[key]
         if self.max_requests is not None and self.requests >= self.max_requests:
+            if self._max_pages > 1:
+                return ()
             raise SearchError("search_request_limit")
-        self.requests += 1
-        request = Request(f"{self._base_url}/search?{urlencode({'q': query, 'format': 'json'})}", headers={"User-Agent": USER_AGENT})
+        collected: list[SearchHit] = []
+        for page in range(1, self._max_pages + 1):
+            if self.max_requests is not None and self.requests >= self.max_requests:
+                break
+            self.requests += 1
+            params = {"q": query, "format": "json"}
+            if page > 1:
+                params["pageno"] = page
+            request = Request(
+                f"{self._base_url}/search?{urlencode(params)}",
+                headers={"User-Agent": USER_AGENT, "Accept": "application/json"},
+            )
+            body = self._fetch_body(request)
+            page_hits = _parse_results(body)
+            if not page_hits:
+                break
+            collected.extend(page_hits)
+        hits = dedupe_hits(collected)
+        self._cache[key] = hits
+        return hits
+
+    def _fetch_body(self, request: Request) -> bytes:
         try:
             with self._opener(request, timeout=SEARCH_TIMEOUT_SECONDS) as response:
                 status = getattr(response, "status", 200)
@@ -128,9 +153,7 @@ class HttpSearxngWebSearchClient:
             raise SearchError("search_network_error", retryable=True) from None
         if len(body) > MAX_BODY_BYTES:
             raise SearchError("search_response_too_large")
-        hits = _parse_results(body)
-        self._cache[query] = hits
-        return hits
+        return body
 
     @staticmethod
     def _http_error(status, headers):
@@ -155,12 +178,17 @@ def client_from_env(*, required=False) -> WebSearchClient | None:
         if required or os.getenv("RESEARCH_ENABLED") == "1":
             raise SearchError("search_not_configured")
         return None
+    raw_cap = (os.getenv("LEAD_MAX_SEARCH_REQUESTS") or "").strip()
     try:
-        raw_limit = os.getenv("LEAD_MAX_SEARCH_REQUESTS", "30")
-        limit = int(raw_limit)
-        if limit < 0:
-            raise ValueError("negative limit")
-        return HttpSearxngWebSearchClient(base_url, max_requests=limit or None)
+        if raw_cap == "0":
+            max_requests = None
+        elif raw_cap:
+            max_requests = int(raw_cap)
+            if max_requests < 0:
+                raise ValueError("negative limit")
+        else:
+            max_requests = 30
+        return HttpSearxngWebSearchClient(base_url, max_requests=max_requests)
     except (PresenceRejected, ValueError):
         raise SearchError("search_invalid_configuration") from None
 

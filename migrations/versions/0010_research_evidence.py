@@ -2,8 +2,8 @@
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
-revision = "0009"
-down_revision = "0008"
+revision = "0010"
+down_revision = "0009"
 branch_labels = depends_on = None
 J = JSONB().with_variant(sa.JSON(), "sqlite")
 

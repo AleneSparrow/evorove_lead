@@ -42,7 +42,8 @@ API использует searches.live_engine; CLI run при RESEARCH_ENABLED=1
 использует ту же сборку. Client 0 --research-dry-run явно конструирует тот же
 ResearchPipeline с dry_run=True. Legacy/JSONL-сценарии остаются отдельными и не
 являются подтверждением полного research-пути. Новые миграции не требуются:
-используется граф main с head 0011, не альтернативная реализация 0009.
+используется одна цепочка с head `0012` (`0009` — qualifications, затем
+research evidence/resources/admission).
 
 Из корня `evorove_lead`:
 
@@ -192,7 +193,7 @@ Payload и API остаются прежними. `RESEARCH_CRM_DELIVERY=1` бе
 Живой открытый веб и платная модель не запускались в этой сессии. Перед
 отдельным разрешением владельца:
 
-1. Отдельная база цикла 1, alembic head `0011`. Рабочий `DATABASE_URL` не
+1. Отдельная база цикла 1, alembic head `0012`. Рабочий `DATABASE_URL` не
    читать и не применять.
 2. `RESEARCH_ENABLED=1`, явные тарифы, `RESEARCH_ALLOW_PAID_LLM=1` только
    после одобрения.

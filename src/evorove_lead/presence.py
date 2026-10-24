@@ -20,8 +20,10 @@ METADATA_HOSTS = frozenset(
     {
         "metadata",
         "metadata.google.internal",
+        "metadata.google.com",
         "metadata.internal",
         "metadata.goog",
+        "instance-data",
     }
 )
 

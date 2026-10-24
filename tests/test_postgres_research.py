@@ -4,7 +4,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import pytest
-from sqlalchemy import create_engine, text, select, func
+from sqlalchemy import create_engine, inspect, text, select, func
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from alembic import command
@@ -73,7 +73,10 @@ def test_postgres_migration_roundtrip(pg, monkeypatch):
     try:
         command.upgrade(config, "head")
         with pg.connect() as connection:
-            assert connection.execute(text("select version_num from alembic_version")).scalar() == "0011"
+            assert connection.execute(text("select version_num from alembic_version")).scalar() == "0012"
+        names = set(inspect(pg).get_table_names())
+        assert {"lead_qualifications", "lead_feedback", "llm_usage"} <= names
+        assert {"research_documents", "research_budget_days", "research_run_leases"} <= names
         warehouse = SqlAlchemyAnalysisWarehouse(pg)
         now = datetime.now(timezone.utc)
         warehouse.save_brief(BriefRecord("legacy-b", "legacy-tenant", (), (), (), (), now))
