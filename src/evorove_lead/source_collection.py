@@ -15,6 +15,35 @@ from evorove_lead.source_core_models import SourceCompany, SourcePerson, SourceC
 
 _EMAIL = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _GENERIC = {'info','admin','support','hello','contact','sales','office','team','noreply'}
+_HREF = re.compile(r"""href=["']([^"'#]+)["']""", re.I)
+_PAGE_PATHS = ("careers", "jobs", "pricing", "about", "team", "contact", "case-studies", "cases", "clients", "work")
+_PAGE_LIMIT = 4
+
+def company_page_urls(root: str, homepage_html: str, *, limit: int = _PAGE_LIMIT) -> tuple[str, ...]:
+    """Root plus up to three same-site signal pages. Never more than `limit` fetches."""
+    root = root if root.endswith("/") else root + "/"
+    found = []
+    for match in _HREF.finditer(homepage_html or ""):
+        absolute = urljoin(root, match.group(1).strip())
+        parts = urlsplit(absolute)
+        if f"{parts.scheme}://{parts.netloc}/" != root and parts.netloc != urlsplit(root).netloc:
+            continue
+        path = parts.path.casefold()
+        if not any(re.search(rf"(?:^|/){re.escape(name)}(?:/|$)", path) for name in _PAGE_PATHS):
+            continue
+        cleaned = f"{parts.scheme}://{parts.netloc}{parts.path}"
+        if cleaned.rstrip("/") == root.rstrip("/") or cleaned in found:
+            continue
+        found.append(cleaned)
+    found.sort(key=lambda url: next((i for i, name in enumerate(_PAGE_PATHS) if re.search(rf"(?:^|/){re.escape(name)}(?:/|$)", urlsplit(url).path.casefold())), len(_PAGE_PATHS)))
+    defaults = [urljoin(root, name) for name in ("about", "pricing", "careers")]
+    ordered = []
+    for url in (*found, *defaults):
+        if url not in ordered and url.rstrip("/") != root.rstrip("/"):
+            ordered.append(url)
+        if len(ordered) >= limit - 1:
+            break
+    return (root, *ordered)
 
 def public_mx_exists(domain: str) -> bool:
     """DNS check during collection; fail closed on timeout/NXDOMAIN/null MX."""
@@ -25,13 +54,25 @@ def public_mx_exists(domain: str) -> bool:
     except Exception:
         return False
 
+def _parse_when(value: str):
+    text = (value or "").strip()
+    if not text:
+        return None
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+
+
 def _utc(value):
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 class SourceCollector:
-    def __init__(self, engine, http: PublicSourceHTTP, *, mx_check=public_mx_exists, clock=lambda: datetime.now(timezone.utc), ttl_days=7):
+    def __init__(self, engine, http: PublicSourceHTTP, *, mx_check=public_mx_exists, clock=lambda: datetime.now(timezone.utc), ttl_days=7, page_signals=None):
         self.engine, self.http, self.mx_check, self.clock = engine, http, mx_check, clock
         self.ttl = timedelta(days=ttl_days)
+        self.page_signals = page_signals
 
     def collect(self, business_id: str, adapters: tuple[SourceAdapter, ...]) -> dict:
         stats = Counter()
@@ -80,16 +121,32 @@ class SourceCollector:
     def _collect_site(self, business_id: str, domain: str, site: str, signal_person: str) -> None:
         parsed = urlsplit(site)
         root = f'{parsed.scheme}://{parsed.netloc}/'
-        urls = [root, *(urljoin(root, slug) for slug in ('about','contact','team'))]
         now = self.clock()
         pages = []
-        for url in urls:
+        dated = []
+        homepage = ""
+        try:
+            homepage = self.http.get(root)
+            final = getattr(self.http, "final_url", "") or root
+            final_host = urlsplit(final).hostname or ""
+            if final_host and registrable_domain(final_host) == domain:
+                root = f"{urlsplit(final).scheme}://{final_host}/"
+            page = extract_html(root, homepage)
+            if page.text.strip():
+                pages.append((root, page.text))
+                dated.append((root, page.text, page.publication_date or "", page.language if hasattr(page, "language") else ""))
+        except Exception:
+            homepage = ""
+        for url in company_page_urls(root, homepage)[1:]:
             try:
                 raw = self.http.get(url)
                 page = extract_html(url, raw)
-                if page.text.strip(): pages.append((url,page.text))
+                if page.text.strip():
+                    pages.append((url, page.text))
+                    dated.append((url, page.text, page.publication_date or "", getattr(page, "language", "")))
             except Exception:
                 continue
+        self._apply_page_signal(business_id, domain, dated, now)
         with Session(self.engine) as db, db.begin():
             company = db.get(SourceCompany, (business_id,domain))
             if company is None or company.suppressed:
@@ -111,6 +168,32 @@ class SourceCollector:
             db.merge(SourcePerson(business_id=business_id,domain=domain,name_key=key,name=decision.name,role=decision.role))
             db.merge(SourceContact(business_id=business_id,domain=domain,email=decision.email.casefold(),name_key=key,
                 mx_verified=True,evidence_url=decision.source_url))
+
+    def _apply_page_signal(self, business_id: str, domain: str, dated, now) -> None:
+        if self.page_signals is None or not dated:
+            return
+        found = self.page_signals(dated)
+        if not found or found.get("quote") not in (found.get("source_text") or ""):
+            return
+        published = _parse_when(found.get("published") or "")
+        when = published or now
+        new_url = found["source_url"]
+        with Session(self.engine) as db, db.begin():
+            rows = list(db.scalars(select(SourceSignal).where(SourceSignal.business_id==business_id, SourceSignal.domain==domain)))
+            target = next((row for row in rows if row.source_id == "searxng_web" or row.signal_type == "company_candidate"), None)
+            if target is None:
+                return
+            fields = dict(signal_type=found["signal_type"], signal_date=when, quote=found["quote"],
+                source_text=found["source_text"], context_only=published is None, fetched_at=now)
+            if target.source_url == new_url:
+                for key, value in fields.items():
+                    setattr(target, key, value)
+                return
+            source, source_id, advertisement = target.source, target.source_id or target.source, target.is_advertisement
+            db.delete(target)
+            db.flush()
+            db.add(SourceSignal(business_id=business_id, source_url=new_url, domain=domain, source=source,
+                is_advertisement=advertisement, source_id=source_id, **fields))
 
     def suppress_and_erase(self, business_id: str, domain: str) -> None:
         """Erase collected content/PII and retain a domain stop-list tombstone."""

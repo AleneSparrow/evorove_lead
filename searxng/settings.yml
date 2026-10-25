@@ -28,7 +28,17 @@ search:
   formats:
     - html
     - json
-  default_lang: "en"
+  # The client sends language=en-US on every request. That code is a SearxNG
+  # search locale (language plus US region), distinct from the UI locale list,
+  # which on this image only exposes "en". Bing maps it to setlang and mkt.
+  # DuckDuckGo maps it to a language and a region. Google CSE maps it to hl
+  # and gl. Brave maps it to a country cookie, Qwant to a locale, and Yahoo to
+  # a language plus a regional domain; in the 2026-10-25 probe those three
+  # returned no hits (rate limit, access denied, parsing error). A hit that
+  # is still not English is dropped before a company page is fetched.
+  # This file is read when the container starts. The probe used the request
+  # parameter, not a restarted container.
+  default_lang: "en-US"
 
 server:
   # Local pilot only. Generate a real secret_key before exposing this

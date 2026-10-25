@@ -11,7 +11,7 @@ from urllib.parse import urlencode, urljoin, urlsplit
 from urllib.request import Request
 from urllib.error import HTTPError
 from urllib.robotparser import RobotFileParser
-from evorove_lead.platforms import is_platform
+from evorove_lead.platforms import is_platform, registrable_domain
 from evorove_lead.presence import public_urlopen, require_public_http_url
 
 USER_AGENT = 'EvoroveLead/0.1 (+https://evorove.com; public cycle-1 research)'
@@ -43,6 +43,7 @@ class PublicSourceHTTP:
         self.count = 0
         self.last = {}
         self.robots = {}
+        self.final_url = ""
 
     def get(self, url: str, *, check_robots=True) -> str:
         url = require_public_http_url(url, host_ok=self.host_ok)
@@ -72,12 +73,34 @@ class PublicSourceHTTP:
         request = Request(url, headers={'User-Agent': USER_AGENT, 'Accept': 'application/json,text/html;q=0.9,text/plain;q=0.8'})
         with self.opener(request, timeout=12) as response:
             final = require_public_http_url(response.geturl(), host_ok=self.host_ok)
-            if check_robots and final != url and (urlsplit(final).hostname != host or not self.robots[host].can_fetch(USER_AGENT, final)):
+            final_host = urlsplit(final).hostname or ''
+            if check_robots and final_host != host:
+                # Apex and www are the same company. A different site is not.
+                if registrable_domain(final_host) != registrable_domain(host):
+                    raise ValueError('robots_redirect_disallow')
+                self._remember_robots(urlsplit(final).scheme, final_host)
+                if not self.robots[final_host].can_fetch(USER_AGENT, final):
+                    raise ValueError('robots_redirect_disallow')
+            elif check_robots and final != url and not self.robots[host].can_fetch(USER_AGENT, final):
                 raise ValueError('robots_redirect_disallow')
             data = response.read(1_000_001)
             if len(data) > 1_000_000:
                 raise ValueError('source_too_large')
+            self.final_url = final
         return data.decode('utf-8', 'replace')
+
+    def _remember_robots(self, scheme: str, host: str) -> None:
+        if host in self.robots:
+            return
+        try:
+            body = self.get(f'{scheme}://{host}/robots.txt', check_robots=False)
+        except HTTPError as exc:
+            if exc.code != 404:
+                raise
+            body = ''
+        parser = RobotFileParser()
+        parser.parse(body.splitlines())
+        self.robots[host] = parser
 
 def _date(value: str) -> datetime:
     return datetime.fromisoformat(value.replace('Z', '+00:00')).astimezone(timezone.utc)

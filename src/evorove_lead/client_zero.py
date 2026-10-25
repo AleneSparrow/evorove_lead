@@ -210,7 +210,7 @@ def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=Fals
     deterministic catalog plan when that cache is empty.
     """
     from sqlalchemy import create_engine
-    from evorove_lead.lead_playbooks import playbook_by_id
+    from evorove_lead.lead_playbooks import find_company_page_signal, playbook_by_id
     from evorove_lead.source_adapters import PublicSourceHTTP
     from evorove_lead.source_collection import SourceCollector
     from evorove_lead.source_analysis import SourceAnalyzer
@@ -252,9 +252,12 @@ def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=Fals
         if any(item.source_id == 'searxng_web' for item in plan.selected):
             from evorove_lead.web_search import client_from_env
             search = client_from_env()
-        collector = SourceCollector(engine, http, ttl_days=int(os.getenv('SOURCE_SITE_TTL_DAYS','7')))
-        summary['collected'] = collector.collect(business_id, adapters_for_plan(plan, http, search))
+        reader = (lambda pages, book=playbook: find_company_page_signal(book, pages)) if playbook else None
+        collector = SourceCollector(engine, http, ttl_days=int(os.getenv('SOURCE_SITE_TTL_DAYS','7')), page_signals=reader)
+        adapters = adapters_for_plan(plan, http, search)
+        summary['collected'] = collector.collect(business_id, adapters)
         summary['http_requests'] = http.count
+        summary['search_filter'] = next((adapter.filter_report() for adapter in adapters if hasattr(adapter, 'filter_report')), {})
     if not collect_only:
         classifier = None
         if playbook is None and os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':

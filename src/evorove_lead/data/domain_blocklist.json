@@ -1,0 +1,42 @@
+{
+  "version": "2026-10-25",
+  "note": "Registrable domains, or a full host when the registrable domain would be too wide (dictionary.cambridge.org). A hit is dropped before any page is fetched.",
+  "job_board": [
+    "indeed.com", "ziprecruiter.com", "glassdoor.com", "monster.com", "simplyhired.com",
+    "builtin.com", "jobleads.com", "joinhandshake.com", "theimpactjob.com", "justsalesjobs.com",
+    "careersingovernment.com", "greenhouse.io", "lever.co", "workable.com", "ashbyhq.com",
+    "smartrecruiters.com", "myworkdayjobs.com", "dice.com"
+  ],
+  "social": [
+    "linkedin.com", "facebook.com", "instagram.com", "twitter.com", "x.com", "tiktok.com",
+    "youtube.com", "reddit.com", "medium.com", "pinterest.com", "quora.com", "researchgate.net"
+  ],
+  "encyclopedia": [
+    "wikipedia.org", "wikidata.org", "britannica.com", "wikihow.com", "geeksforgeeks.org"
+  ],
+  "dictionary": [
+    "merriam-webster.com", "dictionary.com", "dictionary.cambridge.org", "wordreference.com",
+    "tratu.soha.vn"
+  ],
+  "qa_forum": [
+    "zhihu.com", "stackoverflow.com", "stackexchange.com", "baidu.com", "answers.com", "quora.com"
+  ],
+  "list_catalog": [
+    "clutch.co", "g2.com", "capterra.com", "goodfirms.co", "designrush.com", "sortlist.com",
+    "themanifest.com", "crunchbase.com", "revenuebase.ai", "yelp.com", "supplisearch.com",
+    "vendry.io", "casestudies.com", "casestudy.club", "ibisworld.com", "americandesignhub.com"
+  ],
+  "marketplace": [
+    "ebay.com", "etsy.com", "alibaba.com", "walmart.com", "upwork.com", "fiverr.com",
+    "directindustry.com", "windustri.com", "machineb2b.com"
+  ],
+  "large_corporation": [
+    "microsoft.com", "google.com", "apple.com", "amazon.com", "meta.com", "ibm.com", "oracle.com",
+    "salesforce.com", "adobe.com", "cisco.com", "intel.com", "nvidia.com", "dell.com", "hp.com",
+    "hpe.com", "lenovo.com", "samsung.com", "siemens.com", "siemens-healthineers.com",
+    "thermofisher.com", "iqvia.com", "cencora.com", "crowdstrike.com", "adt.com", "avepoint.com",
+    "dhl.com", "canva.com", "accenture.com", "deloitte.com", "pwc.com", "ey.com", "kpmg.com",
+    "mckinsey.com", "bcg.com", "bain.com", "dalecarnegie.com", "ideo.com",
+    "ssi-schaefer.com", "essendant.com", "wwex.com", "claude.com"
+  ]
+}

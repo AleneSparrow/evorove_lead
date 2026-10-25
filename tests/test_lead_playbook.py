@@ -1,7 +1,7 @@
 """Evorove ICP is data: lead segments, queries, and rules. No model and no network."""
 from __future__ import annotations
 from datetime import timedelta
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from evorove_lead.client_zero import resolve_source_plan
 from evorove_lead.lead_playbooks import (
@@ -26,7 +26,7 @@ def test_menu_lists_lead_playbooks_not_the_clients_industry():
     menu = niche_menu()
     assert [item["id"] for item in menu] == ["evorove_icp"]
     assert menu[0]["title"] == "Evorove ICP" and menu[0]["describes"] == "lead_segments"
-    assert menu[0]["queries"] == 24
+    assert menu[0]["queries"] == 12
     assert menu[0]["sources_collected"] == ["searxng_web"]
     assert {item["id"] for item in menu[0]["gaps"]} == {"job_board", "public_complaint_forum", "trade_press"}
     try:
@@ -47,11 +47,13 @@ def test_playbook_queries_are_short_and_do_not_say_site():
     for sub in book.subsegments:
         assert sub["queries"]
         seen.extend(sub["queries"])
-    assert len(seen) == 24
+    assert len(seen) == 12
+    forbidden = {"hiring", "jobs", "job", "careers", "career", "site"}
     for query in seen:
-        tokens = query.casefold().split()
-        assert "site" not in tokens and '"' not in query and "?" not in query
+        tokens = {token.casefold().strip(".,") for token in query.split()}
+        assert not tokens & forbidden and '"' not in query and "?" not in query
         assert len(query) <= 120
+        assert "b2b" in query.casefold() or "case studies" in query.casefold() or "book a call" in query.casefold()
 
 
 def test_playbook_replaces_the_model_and_keeps_disabled_sources_out():
@@ -112,9 +114,9 @@ def test_deal_size_and_exclusions_do_not_call_a_model():
     assert screen_lead(book, evidence=QUOTE + " A developer platform for SaaS companies. Book a call.",
         domain="northwind.example", quote=QUOTE, age_days=1, context_only=False).rejection == "saas_to_saas"
     assert screen_lead(book, evidence=QUOTE + " Book a call.", domain="indeed.com", quote=QUOTE,
-        age_days=1, context_only=False).rejection == "aggregator"
+        age_days=1, context_only=False).rejection == "job_board"
     assert screen_lead(book, evidence=QUOTE + " Book a call.", domain="linkedin.com", quote=QUOTE,
-        age_days=1, context_only=False).rejection == "platform"
+        age_days=1, context_only=False).rejection == "social"
     assert screen_lead(book, evidence="We updated the homepage. Book a call.", domain="northwind.example",
         quote="We updated the homepage.", age_days=1, context_only=False).rejection == "no_playbook_signal"
     high = screen_lead(book, evidence=QUOTE + " Work starts at $6,000.", domain="northwind.example",
@@ -170,3 +172,112 @@ def test_playbook_analysis_rejects_low_ticket_regulated_and_stale():
     _store(engine, page="Northwind is a marketing agency based in the United States. Book a call.", days=31)
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=book).run("client-zero")
     assert touches == () and report["rejections"] == {"stale_signal": 1}
+
+
+def test_blocklist_english_and_company_root():
+    from evorove_lead.company_facts import company_root, confirms_us, looks_english
+    from evorove_lead.domain_blocklist import block_reason
+    assert block_reason("jobs.indeed.com") == "job_board"
+    assert block_reason("en.wikipedia.org") == "encyclopedia"
+    assert block_reason("careers.microsoft.com") == "large_corporation"
+    assert block_reason("dictionary.cambridge.org") == "dictionary"
+    assert block_reason("example.com") == ""
+    assert looks_english("Book a call for B2B teams.")
+    assert not looks_english("B2B là gì? Tất tần tật về mô hình")
+    assert not looks_english("企业软件解决方案与案例研究介绍")
+    assert not looks_english("Book a call for B2B teams.", language="vi")
+    assert confirms_us("Our office is in Ohio. Call +1 (415) 555-0134.")
+    assert confirms_us("The company is based in the United States.")
+    assert not confirms_us("We serve customers worldwide.")
+    assert company_root("https://www.example.com/blog/post") == ("example.com", "https://example.com/")
+
+
+def test_company_page_urls_stay_on_the_site_and_within_four():
+    from evorove_lead.source_collection import company_page_urls
+    html = (
+        '<a href="/blog/post">x</a><a href="/careers">c</a>'
+        '<a href="https://other.example/jobs">n</a><a href="/about">a</a>'
+        '<a href="/pricing">p</a><a href="/team">t</a>'
+    )
+    urls = company_page_urls("https://example.com/", html)
+    assert urls == (
+        "https://example.com/",
+        "https://example.com/careers",
+        "https://example.com/pricing",
+        "https://example.com/about",
+    )
+    assert "https://other.example/jobs" not in urls
+    assert len(company_page_urls("https://example.com/", "")) == 4
+
+
+def test_search_drops_blocklist_before_any_fetch_and_keeps_the_root(monkeypatch):
+    from evorove_lead.source_fallback import UniversalWebFallback
+    from evorove_lead.web_search import SearchHit
+    monkeypatch.setattr("evorove_lead.source_fallback.require_public_http_url", lambda url, host_ok=None: url)
+    class Search:
+        def search(self, query):
+            return (
+                SearchHit("https://www.indeed.com/jobs/sales", "Hiring a sales director in the United States", title="Jobs"),
+                SearchHit("https://en.wikipedia.org/wiki/Sales", "Sales is a business function", title="Sales"),
+                SearchHit("https://vi.example/b2b", "B2B là gì? Tất tần tật về mô hình kinh doanh", title="B2B"),
+                SearchHit("https://www.northwind.example/blog/post", "A marketing agency for B2B teams. Book a call.", title="Northwind"),
+                SearchHit("https://northwind.example/about", "The same company again with another english snippet.", title="Again"),
+            )
+    class HTTP:
+        def get(self, url):
+            raise AssertionError(url)
+    adapter = UniversalWebFallback(HTTP(), Search(), ("marketing agency for B2B book a call",))
+    found = adapter.fetch()
+    assert len(found) == 1
+    assert found[0].site_url == found[0].source_url == "https://northwind.example/"
+    assert found[0].signal_type == "company_candidate" and found[0].context_only is True
+    assert adapter.filter_report()["kept"] == 1
+    assert adapter.filter_report()["dropped"]["job_board"] == 1
+    assert adapter.filter_report()["dropped"]["encyclopedia"] == 1
+    assert adapter.filter_report()["dropped"]["non_english"] == 1
+    assert adapter.filter_report()["dropped"]["duplicate"] == 1
+
+
+def test_company_page_signal_without_a_date_is_context():
+    from evorove_lead.lead_playbooks import find_company_page_signal
+    book = _book()
+    sales = next(item for item in book.signals if item["id"] == "sales_hire")
+    found = find_company_page_signal(book, (
+        ("https://northwind.example/", "Northwind is a marketing agency. Book a call.", "", "en"),
+        ("https://northwind.example/careers", "We are hiring an SDR. The role is open.", "", "en"),
+    ))
+    assert found["source_url"] == "https://northwind.example/careers"
+    assert found["quote"] == "We are hiring an SDR."
+    assert found["context_only"] is True and found["signal_type"] == "sales_hire"
+    assert signal_temperature(book, sales, age_days=0, context_only=True) == "warm"
+    dated = find_company_page_signal(book, (
+        ("https://northwind.example/careers", "We are hiring an SDR.", "2026-10-20T00:00:00Z", "en"),
+    ))
+    assert dated["context_only"] is False
+    assert signal_temperature(book, sales, age_days=5, context_only=False) == "hot"
+    assert find_company_page_signal(book, (
+        ("https://northwind.example/careers", "我们正在招聘销售总监，欢迎加入我们的团队。", "", "zh"),
+    )) is None
+
+
+def test_collector_copies_the_company_page_sentence(monkeypatch):
+    from evorove_lead.source_adapters import RawSignal
+    from tests.test_source_core import NOW, setup
+    engine, collector, fake = setup(monkeypatch)
+    def reader(pages):
+        url, text, published, language = pages[0]
+        quote = "Jane Doe is founder of Example SaaS."
+        assert quote in text
+        return {"quote": quote, "source_url": url, "source_text": text, "signal_type": "sales_hire",
+            "published": published, "context_only": True}
+    collector.page_signals = reader
+    quote = "A marketing agency for B2B teams. Book a call."
+    signal = RawSignal("example.com", "", "https://example.com/", "company_candidate", NOW,
+        "https://example.com/", quote, "searxng_web", quote, context_only=True, source_id="searxng_web")
+    assert collector.add("client-zero", signal) == "collected"
+    assert len(fake.urls) <= 5
+    with Session(engine) as db:
+        row = db.scalar(select(SourceSignal))
+        assert row.signal_type == "sales_hire" and row.context_only is True
+        assert row.quote == "Jane Doe is founder of Example SaaS." and row.quote in row.source_text
+        assert row.source_url == "https://example.com/"

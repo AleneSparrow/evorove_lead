@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from evorove_lead.candidate import accept_candidate
 from evorove_lead.crm_touch import assembled_touch, stable_person_id
 from evorove_lead.handoff import Cycle1Handoff
+from evorove_lead.company_facts import confirms_us
 from evorove_lead.lead_playbooks import screen_lead
 from evorove_lead.source_core_models import SourceCompany, SourcePerson, SourceContact, SourceRawPage, SourceSignal
 
@@ -79,7 +80,11 @@ class SourceAnalyzer:
                     counts['no_verified_email']+=1;continue
                 person,contact=pair
                 evidence=' '.join([signal.source_text,*[p.text for p in fresh]])
-                if not any(_US.search(p.text) for p in fresh):
+                if playbook is None:
+                    us_ok = any(_US.search(p.text) for p in fresh)
+                else:
+                    us_ok = any(confirms_us(p.text) or _US.search(p.text) for p in fresh)
+                if not us_ok:
                     counts['country_not_confirmed']+=1;continue
                 if signal.quote not in signal.source_text:
                     counts['ungrounded_quote']+=1;continue

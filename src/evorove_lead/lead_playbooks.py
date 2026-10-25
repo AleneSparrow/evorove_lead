@@ -11,6 +11,10 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+from urllib.parse import urlsplit
+
+from evorove_lead.company_facts import looks_english
+from evorove_lead.domain_blocklist import block_reason
 from evorove_lead.evidence import digest
 from evorove_lead.platforms import is_platform, registrable_domain
 from evorove_lead.source_catalog import CATALOG, source_by_id
@@ -25,6 +29,7 @@ _TEAM_OF = re.compile(r"\bteam of\s+([2-9]|\d{2,})\b", re.I)
 _TEAM_WORDS = re.compile(r"\b(?:our team|leadership team)\b", re.I)
 _ROLES = re.compile(r"\b(?:founder|owner|ceo|sales|engineer|consultant|designer|recruiter|director)\b", re.I)
 _QUERY_TOKEN = re.compile(r"\S+")
+_QUERY_FORBIDDEN = frozenset({"hiring", "jobs", "job", "careers", "career"})
 
 
 @dataclass(frozen=True)
@@ -189,6 +194,8 @@ def _exclusion(playbook: LeadPlaybook, rule: dict, evidence: str, domain: str) -
     method = rule.get("method")
     if method == "already_applied":
         return ""
+    if method == "shared_blocklist":
+        return block_reason(domain)
     if method == "platform_domain":
         return rule["id"] if domain and is_platform(domain) else ""
     if method == "domain_list":
@@ -223,6 +230,45 @@ def _signal_sentence(quote: str, pattern: str) -> str:
         if sentence and compiled.search(sentence) and sentence in quote:
             return sentence
     return ""
+
+
+_PAGE_RANK = ("careers", "jobs", "pricing", "about", "team", "contact", "case-studies", "cases", "clients", "work")
+
+
+def find_company_page_signal(playbook: LeadPlaybook, pages) -> dict | None:
+    """A signal sentence copied from the company's own page.
+
+    Without a publication date the result is context, not an event, so it
+    cannot be hot. The search snippet is not a substitute for this sentence.
+    """
+    ranked = sorted(pages, key=lambda item: _page_rank(item[0]))
+    for item in ranked:
+        url, text = item[0], item[1]
+        published = item[2] if len(item) > 2 else ""
+        language = item[3] if len(item) > 3 else ""
+        if not looks_english(text or "", language=language or ""):
+            continue
+        for signal in playbook.signals:
+            sentence = _signal_sentence(text, signal["pattern"])
+            if not sentence:
+                continue
+            return {
+                "quote": sentence,
+                "source_url": url,
+                "source_text": text,
+                "signal_type": signal["id"],
+                "published": published or "",
+                "context_only": not str(published or "").strip(),
+            }
+    return None
+
+
+def _page_rank(url: str) -> int:
+    path = urlsplit(url).path.casefold()
+    for index, name in enumerate(_PAGE_RANK):
+        if re.search(rf"(?:^|/){re.escape(name)}(?:/|$)", path):
+            return index
+    return len(_PAGE_RANK)
 
 
 def _segment(playbook: LeadPlaybook, evidence: str) -> str:
@@ -286,7 +332,7 @@ def _load(path: Path) -> LeadPlaybook:
             if not rule.get("domains"):
                 raise RuntimeError(f"{path.name} domain list")
             continue
-        if method in {"platform_domain", "low_ticket"}:
+        if method in {"platform_domain", "low_ticket", "shared_blocklist"}:
             continue
         if method not in {None, ""} or not rule.get("pattern"):
             raise RuntimeError(f"{path.name} exclusion")
@@ -329,8 +375,10 @@ def _check_query(name: str, query: str) -> None:
     if not isinstance(query, str) or not 8 <= len(query) <= 120 or '"' in query or "?" in query:
         raise RuntimeError(f"{name} query")
     for token in _QUERY_TOKEN.findall(query):
-        folded = token.casefold()
+        folded = token.casefold().strip(".,")
         if folded == "site":
             raise RuntimeError(f"{name} query must not contain the word site")
+        if folded in _QUERY_FORBIDDEN:
+            raise RuntimeError(f"{name} query must not search for {folded}")
         if folded.startswith("site:") and not re.fullmatch(r"site:[a-z0-9.-]+", folded):
             raise RuntimeError(f"{name} query has a site token that is not an operator")

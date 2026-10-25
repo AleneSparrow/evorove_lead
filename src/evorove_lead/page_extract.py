@@ -66,6 +66,7 @@ class ExtractedPage:
     publication_date: str | None
     author: str | None
     content_type: str
+    language: str = ""
 
     @property
     def content_sha256(self) -> str:
@@ -106,6 +107,7 @@ class _MainContentParser(HTMLParser):
         self.title = ""
         self.author: str | None = None
         self.publication_date: str | None = None
+        self.language = ""
         self.canonical_href: str | None = None
         self._parts: list[str] = []
         self._skip_stack: list[str] = []
@@ -114,6 +116,8 @@ class _MainContentParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = tag.lower()
         attr = {((name or "").lower()): (value or "") for name, value in attrs}
+        if lowered == "html":
+            self.language = (attr.get("lang") or "").strip()
         if self._skip_stack or lowered in _SKIP_TAGS or _chrome(attrs):
             if lowered not in _VOID_TAGS:
                 self._skip_stack.append(lowered)
@@ -210,6 +214,7 @@ def extract_html(source_url: str, html: str, *, content_type: str = "text/html")
         publication_date=parser.publication_date,
         author=parser.author,
         content_type=content_type,
+        language=parser.language,
     )
 
 

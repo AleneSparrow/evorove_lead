@@ -72,6 +72,39 @@ class FakeHTTP:
         if url.endswith('/robots.txt'):return FakeResponse(url,self.robots)
         return FakeResponse(url,'<html><body><p>Jane Doe is founder of Example SaaS. Example SaaS is based in the United States. jane@example.com</p></body></html>')
 
+def test_same_company_www_redirect_is_fetched_and_another_site_is_not():
+    class Opener:
+        def __init__(self):
+            self.urls = []
+        def __call__(self, request, timeout):
+            url = request.full_url
+            self.urls.append(url)
+            if url.startswith("https://example.com/"):
+                target = "https://www.example.com" + url[len("https://example.com"):]
+            else:
+                target = url
+            body = "User-agent: *\nAllow: /\n" if url.endswith("/robots.txt") else "<html><body><p>Acme is based in Ohio.</p></body></html>"
+            return FakeResponse(target, body)
+    opener = Opener()
+    http = PublicSourceHTTP(opener=opener, clock=lambda: 0, sleep=lambda n: None, host_ok=lambda host: True, max_requests=10)
+    assert "Ohio" in http.get("https://example.com/")
+    assert http.final_url == "https://www.example.com/"
+    assert "https://www.example.com/robots.txt" in opener.urls
+    class Elsewhere:
+        def __call__(self, request, timeout):
+            url = request.full_url
+            if url.endswith("/robots.txt"):
+                return FakeResponse(url, "User-agent: *\nAllow: /\n")
+            return FakeResponse("https://evil.test/", "no")
+    blocked = PublicSourceHTTP(opener=Elsewhere(), clock=lambda: 0, sleep=lambda n: None, host_ok=lambda host: True, max_requests=10)
+    try:
+        blocked.get("https://example.com/")
+    except ValueError as exc:
+        assert str(exc) == "robots_redirect_disallow"
+    else:
+        raise AssertionError("cross-site redirect")
+
+
 def test_robots_block_and_one_second_site_spacing():
     fake=FakeHTTP('User-agent: *\nDisallow: /contact')
     tick=[0.0]

@@ -66,6 +66,7 @@ class SearchHit:
     snippet: str
     published: str = ""
     title: str = ""
+    engine: str = ""
 
 
 class WebSearchClient(Protocol):
@@ -95,9 +96,13 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
         if len(hits) < MAX_RESULTS_PER_QUERY:
             published = item.get("publishedDate") or item.get("published") or ""
             title = item.get("title") or ""
+            engine = item.get("engine") or ""
+            if not engine and isinstance(item.get("engines"), list):
+                engine = ",".join(part for part in item["engines"] if isinstance(part, str))
             hits.append(SearchHit(url=item["url"].strip(), snippet=item.get("content", "").strip(),
                 published=published.strip() if isinstance(published, str) else "",
-                title=title.strip() if isinstance(title, str) else ""))
+                title=title.strip() if isinstance(title, str) else "",
+                engine=engine.strip() if isinstance(engine, str) else ""))
     failures = payload.get("unresponsive_engines", [])
     if not isinstance(failures, list):
         raise SearchError("search_invalid_structure")
@@ -129,7 +134,7 @@ class HttpSearxngWebSearchClient:
             if self.max_requests is not None and self.requests >= self.max_requests:
                 break
             self.requests += 1
-            params = {"q": query, "format": "json"}
+            params = {"q": query, "format": "json", "language": "en-US"}
             if page > 1:
                 params["pageno"] = page
             request = Request(

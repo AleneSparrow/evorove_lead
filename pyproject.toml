@@ -27,6 +27,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "evorove_lead.playbooks" = ["*.json"]
+"evorove_lead" = ["data/*.json"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
