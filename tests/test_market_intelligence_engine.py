@@ -37,10 +37,39 @@ def test_missing_market_sources_never_fabricates_report():
         MarketResearchEngine(Questions(), EmptySearch(), lambda *args: None).research(draft.assemble((source,)))
 
 def test_public_need_queries_reject_surveys_and_linkedin():
-    assert is_buyer_query('"intake coordination" "small businesses" US')
-    assert buyer_queries_for(ICPHypothesis(segment="small businesses", buyer_role="owner", potential_problem="intake coordination", solution_mechanism="organize intake", signals=("expansion",), evidence_requirements=("explicit need",), disqualifiers=("closed",), geography="US", search_strategy=("request",), attractiveness_assumptions=("unknown",), confidence=.5, supporting_claims=("c",)))[0] == '"intake coordination" "small businesses" US'
+    assert is_buyer_query("intake coordination small businesses US")
+    assert buyer_queries_for(ICPHypothesis(segment="small businesses", buyer_role="owner", potential_problem="intake coordination", solution_mechanism="organize intake", signals=("expansion",), evidence_requirements=("explicit need",), disqualifiers=("closed",), geography="US", search_strategy=("request",), attractiveness_assumptions=("unknown",), confidence=.5, supporting_claims=("c",)))[0] == "small businesses intake coordination US"
     assert not is_buyer_query("What percentage of small businesses struggle with prospecting?")
     assert not is_buyer_query("site:linkedin.com owner needs customers")
+
+
+def test_buyer_queries_do_not_quote_model_prose():
+    h = ICPHypothesis(
+        segment="Small local service businesses (including home services) in the US that buy shared marketplace leads or respond slowly to leads",
+        buyer_role="Owner",
+        potential_problem="Owner may say publicly that marketplace leads are shared, close poorly and cost too much, or that follow-up is slow. Vendor-claimed market statistics apply to contractors.",
+        solution_mechanism="find prospects outside shared marketplaces",
+        signals=("Public complaints about lead marketplace costs or shared leads",),
+        evidence_requirements=("Public owner statement about lead cost",),
+        disqualifiers=("Outside the US",),
+        geography="United States",
+        search_strategy=("Search forums for shared-lead complaints",),
+        attractiveness_assumptions=("pain may transfer",),
+        confidence=0.3,
+        supporting_claims=("c",),
+    )
+    queries = buyer_queries_for(h)
+    assert queries
+    blob = " ".join(queries)
+    assert "Owner may say publicly" not in blob
+    assert "Vendor-claimed" not in blob
+    for query in queries:
+        assert '"' not in query
+        assert is_buyer_query(query)
+        assert len(query) <= 120
+        assert "United States" in query or query.startswith("site:reddit.com")
+    assert "service" in queries[0].casefold()
+    assert "marketplace" in queries[0].casefold() or "leads" in queries[0].casefold()
     h = ICPHypothesis(segment="SMB", buyer_role="owner", potential_problem="intake overload", solution_mechanism="organize intake", signals=("expansion",), evidence_requirements=("published request",), disqualifiers=("closed",), geography="US", search_strategy=("expansion request",), attractiveness_assumptions=("unknown budget",), confidence=.5, supporting_claims=("c",))
     assert h.model_copy(update={"version": 2, "confidence": .6}).stable_key == h.stable_key
     assert SearchPlanner.adapt(h, "expansion request US").intent_trigger.kind == "business_listing"
@@ -207,3 +236,20 @@ def test_market_research_stops_after_five_pages():
     with pytest.raises(ResearchUnavailable, match="stop after clip check"):
         MarketResearchEngine(Reasoner(), Many(), retrieve).research(draft.assemble((source,)))
     assert len(fetched) == MARKET_INTERPRET_MAX_PAGES
+
+
+def test_queries_follow_hypothesis_signals_and_strategy_for_saas():
+    base = ICPHypothesis(segment="small SaaS startups", buyer_role="founder",
+        potential_problem="customer acquisition", solution_mechanism="find prospects",
+        signals=("hiring first SDR",), evidence_requirements=("dated founder statement",),
+        disqualifiers=("outside US",), geography="United States",
+        search_strategy=("site:ycombinator.com SaaS hiring SDR",),
+        attractiveness_assumptions=("unknown budget",), confidence=.4, supporting_claims=("c",))
+    queries = buyer_queries_for(base)
+    assert any("hiring first SDR" in q for q in queries)
+    assert any("site:ycombinator.com" in q for q in queries)
+    changed = buyer_queries_for(base.model_copy(update={"signals": ("first customers stalled",),
+        "search_strategy": ("site:indiehackers.com SaaS first customers",)}))
+    assert changed != queries
+    assert any("first customers stalled" in q for q in changed)
+    assert all("United States" in q and '"' not in q and len(q) <= 120 for q in queries + changed)

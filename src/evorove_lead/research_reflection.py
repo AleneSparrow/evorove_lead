@@ -14,12 +14,15 @@ class ResearchReflectionLoop:
     def __init__(self, reasoner, budget, record):
         self.reasoner, self.budget, self.record = reasoner, budget, record
 
-    def run(self, initial_queries, execute, *, context):
+    def run(self, initial_queries, execute, *, context, iteration_scope=None):
         queries = tuple(initial_queries)
         seen = set()
         history = []
         for iteration in range(self.budget.limits.iterations):
-            self.budget.consume(iterations=1)
+            if iteration_scope is None:
+                self.budget.consume(iterations=1)
+            else:
+                self.budget.consume_iteration(iteration_scope)
             queries = tuple(q for q in queries if q not in seen)
             if not queries: break
             seen.update(queries)

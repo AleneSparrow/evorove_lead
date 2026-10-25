@@ -66,3 +66,16 @@ def test_deadline_and_iteration_budget():
     b = ResearchBudget("a", clock=lambda: now)
     now += timedelta(seconds=901)
     with pytest.raises(BudgetExhausted, match="deadline"): b.consume(queries=1)
+
+
+def test_hypothesis_iterations_are_bounded_and_queries_remain_run_wide():
+    budget = ResearchBudget("a", BudgetLimits(iterations=1, queries=1))
+    budget.consume_iteration("first")
+    assert not budget.iterations_remaining("first")
+    with pytest.raises(BudgetExhausted, match="iterations"):
+        budget.consume_iteration("first")
+    budget.consume_iteration("second")
+    assert budget.used["iterations"] == 2
+    budget.consume(queries=1)
+    with pytest.raises(BudgetExhausted, match="queries"):
+        budget.consume(queries=1)

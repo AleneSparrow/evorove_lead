@@ -59,6 +59,7 @@ class ResearchBudget:
         self.started_at = clock()
         self.used = {name: 0 for name in ("queries", "companies", "pages", "browser_calls", "llm_calls", "input_tokens", "output_tokens", "iterations", "cost_microusd")}
         self._lock = Lock()
+        self._iteration_scopes = {}
 
     def check_time(self):
         from evorove_lead.run_ownership import check_ownership
@@ -78,6 +79,21 @@ class ResearchBudget:
             for name, amount in amounts.items(): self.used[name] += amount
             if self.recorder: self.recorder(dict(self.used))
             return day
+
+    def iterations_remaining(self, scope):
+        return self._iteration_scopes.get(scope, 0) < self.limits.iterations
+
+    def consume_iteration(self, scope):
+        """Iterations bound each hypothesis loop; other resources remain run-wide."""
+        with self._lock:
+            self.check_time()
+            count = self._iteration_scopes.get(scope, 0)
+            if count >= self.limits.iterations:
+                raise BudgetExhausted("iterations")
+            self._iteration_scopes[scope] = count + 1
+            self.used["iterations"] += 1
+            if self.recorder:
+                self.recorder(dict(self.used))
 
     def settle(self, reserved, actual, day):
         with self._lock:

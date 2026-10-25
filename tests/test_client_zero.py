@@ -47,7 +47,7 @@ def test_owner_materials_are_deposited_ahead_of_the_live_site(tmp_path: Path) ->
     headings parse poorly, per docs/client-zero-pilot-checklist-ru.md."""
 
     (tmp_path / "service.txt").write_text(
-        "Sales automation for small local service businesses.\n", encoding="utf-8"
+        "Sales automation for small SaaS and online businesses in the US.\n", encoding="utf-8"
     )
     live = _FakePresence((DepositedMaterial(name=CLIENT_ZERO_SITE, body="SHOUTING HERO LINE"),))
     presence = _WithOwnerMaterials(live, tmp_path)

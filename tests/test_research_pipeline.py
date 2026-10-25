@@ -86,7 +86,7 @@ def test_reflection_revises_empty_search_then_qualifies(tmp_path):
     from evorove_lead.llm_usage import CompletionReply
     class RetrySearch(Search):
         def search(self, query):
-            if query == '"intake coordination" "small businesses" US':
+            if query == "small businesses intake coordination US":
                 self.queries.append(query)
                 return ()
             return super().search(query)
@@ -311,3 +311,60 @@ def test_truncated_market_interpret_is_failed_not_no_fit(tmp_path):
     assert "market_document_id" not in pipeline.last_run
     assert pipeline.client.queries
     assert not crm.accepted and store.pending_count() == 0
+
+
+def test_each_allocated_hypothesis_gets_a_first_wave_when_iterations_is_one(tmp_path):
+    from evorove_lead.engine import GenerationStatus
+    from evorove_lead.llm_usage import CompletionReply
+    from evorove_lead.research_budget import BudgetLimits
+
+    class TwoBuyers(Completion):
+        def complete_bounded(self, *, system, user, max_tokens, effort=None, **kwargs):
+            if "Name buyers who would say" in system:
+                data = json.loads(user)
+                ref = data["dna"]["evidence"]["claims"][0]["id"]
+                first = ICPHypothesis(
+                    segment="small businesses", buyer_role="owner", potential_problem="intake coordination",
+                    solution_mechanism="organize intake", signals=("expansion",), evidence_requirements=("explicit need",),
+                    disqualifiers=("closed",), geography="US", search_strategy=("request",),
+                    attractiveness_assumptions=("unknown",), confidence=.5, supporting_claims=(ref,),
+                )
+                second = first.model_copy(update={"segment": "local repair shops", "potential_problem": "slow follow up"})
+                return CompletionReply(json.dumps({"hypotheses": [first.model_dump(mode="json"), second.model_dump(mode="json")]}), 20, 20)
+            return super().complete_bounded(system=system, user=user, max_tokens=max_tokens, effort=effort)
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    pipeline.completion = TwoBuyers()
+    pipeline.limits = BudgetLimits(iterations=1)
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert result.status is not GenerationStatus.BUDGET_EXHAUSTED
+    assert pipeline.last_run["status"] != "budget_exhausted"
+    assert pipeline.last_run["stop_reason"] != "iterations"
+    assert pipeline.last_run["people_queries"] == 2
+    assert pipeline.last_run["usage"]["iterations"] == 2
+    assert len(pipeline.last_run.get("people_search") or []) == 2
+    assert all(row["query"] and '"' not in row["query"] for row in pipeline.last_run["people_search"])
+    assert {row["hits"] for row in pipeline.last_run["people_search"]} == {1}
+    assert len(pipeline.store.list("a", "icp_proposed")) == 2
+
+
+def test_empty_people_search_records_query_and_zero_hits(tmp_path):
+    from evorove_lead.research_budget import BudgetLimits
+
+    class Silent(Search):
+        def search(self, query):
+            if query == "market demand evidence":
+                return super().search(query)
+            self.queries.append(query)
+            return ()
+
+    db, pipeline, engine, crm, store = setup_pipeline(tmp_path, dry_run=True)
+    pipeline.client = Silent()
+    pipeline.limits = BudgetLimits(iterations=1)
+    engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    attempts = pipeline.last_run.get("people_search") or []
+    assert attempts
+    assert attempts[0]["query"] == "small businesses intake coordination US"
+    assert attempts[0]["hits"] == 0
+    assert attempts[0]["error"] is None
+    assert attempts[0]["rejections"] == {}

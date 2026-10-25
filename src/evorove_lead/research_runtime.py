@@ -70,7 +70,7 @@ class ResearchPipeline:
             raise ResearchUnavailable("research requires run ownership")
         run_id = owner.run_id
         now = self.clock()
-        state = {"id": run_id, "started_at": now.isoformat(), "dry_run": self.dry_run, "status": "running", "stages": [], "limits": self.limits.model_dump(), "usage": {}, "people_queries": 0}
+        state = {"id": run_id, "started_at": now.isoformat(), "dry_run": self.dry_run, "status": "running", "stop_reason": "", "stages": [], "limits": self.limits.model_dump(), "usage": {}, "people_queries": 0, "people_search": []}
         self.last_run = state
         def save(): self.store.save(seed.business_id, "run", run_id, state)
         def stage(name): state["stages"].append(name); save()
@@ -149,6 +149,7 @@ class ResearchPipeline:
                 version = prior["version"] if prior and prior["content_hash"] == content_version else prior["version"] + 1 if prior else 1
                 h = proposed_h.model_copy(update={"version": version})
                 self.store.save(seed.business_id, "icp_version", h.stable_key, {"content_hash": content_version, "version": version, "initial_rank": priority, "rank_reason": "supporting evidence count, then uncalibrated research confidence"})
+                self.store.save(seed.business_id, "icp_proposed", h.stable_key, h.model_dump(mode="json"))
                 hypotheses.append(h)
             observations = []
             previous = self.store.list(seed.business_id, "strategy_observation")
@@ -183,15 +184,24 @@ class ResearchPipeline:
                         # Discovery mode reuses the existing per-hypothesis connector,
                         # but defers contact/LLM work until company deduplication.
                         connector = WebSearchPeopleSearch(search)
+                        attempt = {"hypothesis_key": h.stable_key, "query": query, "hits": None, "error": None, "rejections": {}}
+                        state["people_search"].append(attempt)
+                        save()
                         try:
                             discovered = connector.discover(SearchPlanner.adapt(h, query))
-                        except SearchError:
+                        except SearchError as exc:
+                            attempt["error"] = exc.code
+                            save()
                             continue
+                        attempt["hits"] = len(discovered)
+                        save()
                         for hit in discovered:
                             trace_id = new_id("trace")
                             engine._warehouse.save_trace(TraceRecord(id=trace_id, business_id=seed.business_id, hypothesis_id=hypothesis_id, url=hit.url, fetched_at=self.clock(), raw_text=hit.snippet, query_used=query, source_channel="search_snippet"))
                             def reject_trace(code):
                                 reasons[code] += 1
+                                attempt["rejections"][code] = attempt["rejections"].get(code, 0) + 1
+                                save()
                                 engine._warehouse.save_rejected_trace(RejectedTraceRecord(id=new_id("rejected_trace"), business_id=seed.business_id, trace_id=trace_id, reason=code, rejected_at=self.clock()))
                             try: domain = company_key(hit.url)
                             except ValueError:
@@ -285,12 +295,15 @@ class ResearchPipeline:
                                     review = AdversarialValidation(qualify_reasoner).review(dna, h, bundle, assessment, market=market)
                             stage("qualification_gate")
                             identity = bundle.contact.identity if bundle.contact else ""
-                            gate = QualificationGate().evaluate(dna=dna, bundle=bundle, assessment=assessment, review=review, duplicate=self.delivery.seen(seed.business_id, identity), now=self.clock(), research_remaining=(budget.used["iterations"] < self.limits.iterations and query_count < allocation[h.stable_key]))
+                            gate = QualificationGate().evaluate(dna=dna, bundle=bundle, assessment=assessment, review=review, duplicate=self.delivery.seen(seed.business_id, identity), now=self.clock(), research_remaining=(budget.iterations_remaining(h.stable_key) and query_count < allocation[h.stable_key]))
                             decision_id = new_id("qualification")
                             candidate_id = new_id("candidate")
                             self.store.save(seed.business_id, "qualification", decision_id, {"run_id": run_id, "candidate_id": candidate_id, "hypothesis_id": hypothesis_id, "dna_version": dna.version, "market_document_id": market_id, "evidence": bundle.model_dump(mode="json"), "assessment": assessment.model_dump(mode="json"), "review": review.model_dump(mode="json"), "gate": gate.model_dump(mode="json")})
                             if gate.decision != Decision.QUALIFIED:
                                 reasons.update(gate.codes)
+                                for code in gate.codes:
+                                    attempt["rejections"][code] = attempt["rejections"].get(code, 0) + 1
+                                save()
                                 engine._warehouse.save_candidate(CandidateRecord(id=candidate_id, business_id=seed.business_id, hypothesis_id=hypothesis_id, identity=identity, channel="email" if "@" in identity else "unknown", reason=gate.codes[0], reason_source=first.final_url, fit=assessment.product_fit.score or 0, evidence=assessment.need_evidence.score or 0, addressable=bool(identity), decision="rejected", decided_at=self.clock(), trace_id=trace_id, rejection_reason=gate.codes[0]))
                                 rejected.append(RejectedHit(identity=identity, why=gate.codes[0]))
                                 continue
@@ -310,7 +323,7 @@ class ResearchPipeline:
                             qualified_count += 1
                     return {"observation_id": new_id("observation"), "qualified": qualified_count, "rejections": dict(reasons), "infrastructure_failure": bool(search.errors)}
                 def record_reflection(value): self.store.save(seed.business_id, "reflection", new_id("reflection"), {"run_id": run_id, "hypothesis_key": h.stable_key, **value})
-                ResearchReflectionLoop(reasoner, budget, record_reflection).run(planned_queries[:1], execute, context=h.model_dump(mode="json"))
+                ResearchReflectionLoop(reasoner, budget, record_reflection).run(planned_queries[:1], execute, context=h.model_dump(mode="json"), iteration_scope=h.stable_key)
                 stats["cost_microusd"] = budget.used["cost_microusd"] - initial_cost
                 if not search.errors:
                     self.store.save(seed.business_id, "strategy_observation", digest(run_id + h.stable_key), stats)

@@ -1,0 +1,229 @@
+{
+  "barriers": [
+    "c3"
+  ],
+  "evidence": {
+    "claims": [
+      {
+        "id": "c1",
+        "text": "A Merchant Growth article, a business-authored first-party source, says small businesses are adopting automation and digital tools and that AI is becoming part of everyday operations. This is general and Canada-focused, so it only loosely supports demand in the US.",
+        "sources": [
+          {
+            "quote": "AI is no longer just a trend; it is becoming part of everyday business operations.",
+            "source_id": "d25286d8439cd50e3d2f5798ca7f15794b0291b1871e99684f5697ced769012e",
+            "relationship": "supports"
+          }
+        ],
+        "subject": "Small business technology adoption",
+        "predicate": "is described as moving toward automation and AI",
+        "confidence": 0.4,
+        "assertion_type": "BUSINESS_CLAIM",
+        "confidence_reason": "Source is a financier's blog, Canada-focused, and the quote is general rather than specific to sales automation."
+      },
+      {
+        "id": "c2",
+        "text": "QuoteIQ says its Atlas map lets users search an area for local businesses and pay per business to unlock contact details, with plans from $29.99/mo. This is a vendor claim about a competing alternative, aimed at contractors.",
+        "sources": [
+          {
+            "quote": "pay cents per business to unlock names, phone numbers and websites",
+            "source_id": "a4448f6867fc5cafcfdc3ecb20d933ffd236fb31fe00a6ffd33ce0968c2635c4",
+            "relationship": "supports"
+          }
+        ],
+        "subject": "QuoteIQ",
+        "predicate": "is an alternative offering built-in lead generation",
+        "confidence": 0.6,
+        "assertion_type": "BUSINESS_CLAIM",
+        "confidence_reason": "Specific first-party statement from the vendor, but self-promotional and contractor-focused."
+      },
+      {
+        "id": "c3",
+        "text": "BaaDigi claims marketplace leads are shared with several contractors and close at 5-20%, which is a competitive alternative and a cost barrier for contractors. The page is a vendor's own comparison.",
+        "sources": [
+          {
+            "quote": "sharing caps your close rate at 5–20% no matter how good your sales process is",
+            "source_id": "06d541f03f3ed70d4460b7c6d8b2e0c8ff59b121699b1a0253b30871b8a809d1",
+            "relationship": "supports"
+          }
+        ],
+        "subject": "Marketplace lead providers",
+        "predicate": "sell shared leads that close at low rates",
+        "confidence": 0.5,
+        "assertion_type": "BUSINESS_CLAIM",
+        "confidence_reason": "First-party agency claim with no independent verification, though it is specific."
+      },
+      {
+        "id": "c4",
+        "text": "BaaDigi claims the average contractor takes over 14 hours to call back and that fast response improves qualification. This suggests a trigger for automated conversation, though it is about contractors, not salons or repair shops.",
+        "sources": [
+          {
+            "quote": "the average contractor takes over 14 hours to call back",
+            "source_id": "06d541f03f3ed70d4460b7c6d8b2e0c8ff59b121699b1a0253b30871b8a809d1",
+            "relationship": "supports"
+          }
+        ],
+        "subject": "Slow lead response",
+        "predicate": "may be a buying trigger for automated follow-up",
+        "confidence": 0.4,
+        "assertion_type": "BUSINESS_CLAIM",
+        "confidence_reason": "Unsourced vendor statistic, and the segment differs from Evorove's stated one."
+      },
+      {
+        "id": "c5",
+        "text": "Hatch offers always-on AI for SMS and email conversations and 24/7 call handling aimed at home services and home improvement. It is an adjacent alternative that responds to leads rather than finding prospects.",
+        "sources": [
+          {
+            "quote": "Always-on AI for SMS and email conversations",
+            "source_id": "ac943561c2554b78baef15164199c5f40da698913ff1c735d5f1d96a811e0c11",
+            "relationship": "supports"
+          }
+        ],
+        "subject": "Hatch",
+        "predicate": "offers AI messaging and call handling for home services",
+        "confidence": 0.55,
+        "assertion_type": "BUSINESS_CLAIM",
+        "confidence_reason": "Vendor homepage describes the features, but the quote does not describe prospecting."
+      },
+      {
+        "id": "c6",
+        "text": "The retrieved sources concern contractors and home services, or are general Canadian small business trends. None directly evidences demand among independent salons or local repair shops in the US, so segment fit is an inference to be tested.",
+        "sources": [
+          {
+            "quote": "Top 10 CRMs with Built-In Lead Generation for Contractors in 2026",
+            "source_id": "a4448f6867fc5cafcfdc3ecb20d933ffd236fb31fe00a6ffd33ce0968c2635c4",
+            "relationship": "context"
+          }
+        ],
+        "subject": "Evidence coverage",
+        "predicate": "does not directly address Evorove's salon and repair-shop segment",
+        "confidence": 0.55,
+        "assertion_type": "INFERENCE",
+        "confidence_reason": "Based on the absence of segment-specific evidence in the supplied sources."
+      }
+    ],
+    "contact": null,
+    "sources": [
+      {
+        "id": "d25286d8439cd50e3d2f5798ca7f15794b0291b1871e99684f5697ced769012e",
+        "url": "https://www.merchantgrowth.com/business-trends-2026/",
+        "public": true,
+        "content": "Small Business Trends of 2026 | Merchant Growth . Platform . Platform Overview . Merchant Growth Platform . Capital, tools, and partners designed for small business growth. . Funding Solutions . Term Financing . Flexible capital for expansion, equipment, and hiring . Line of Credit . Access funds when you need them . Platform Tools . Tabit . Payments and transaction tools . Merchants’ Market . Curated partner ecosystem . Industries . Merchant Growth Industries . E-commerce . Cannabis . Retail . Restaurants . Automotive . Salons & Spas . Skilled Trades . Manufacturing . SaaS . Medical . Dentist . Transportation . Other Industries . Company . Welcome to Merchant Growth . About . We are Canada’s fastest and most friendly alternative financier. . Careers . Our digital by design approach is about creating new ways to collaborate and build together. . Partner With Us . Partnering with Merchant Growth is a proven way of helping Canadian SMBs prosper. . Resources . Merchant Growth Resources . Blog . Tips, tricks, general information, and things that might help from industry experts. . Case Studies . Discover how Merchant Growth has impacted other companies like yours. . Podcast . A podcast that highlights all things finance, fintech, entrepreneurship, and banking. . Press . Merchant Growth in the News . FAQ . Frequently Asked Questions . Events . Upcoming events, past webinars and expert sessions to help your business grow. . Log In Get Started . EN English . Français . Blog / . Business Advice . / . Jan 06, 2026 . Small Business Trends of 2026 . In this article . Business Trends 2026: What Small Businesses Need to Know to Stay Ahead . If there is one word that describes 2026, it is momentum. Artificial intelligence is stepping into everyday workflows, customers want smoother and more personal experiences, and teams are operating in new ways that support creativity and balance. Paying attention to business trends is not about chasing every new idea. It is about identifying the changes that can make your business run better. . Recent BDC insights show that Canadian businesses are investing more in digital tools, automation, and flexible staffing solutions to stay nimble in a changing market. These developments are not just for large companies with big technology budgets. They are practical, accessible, and increasingly affordable for small business owners across every sector. In this guide, we explore the key business trends shaping 2026 and how you can use them to strengthen operations, delight customers, and fuel growth in the year ahead. . What Are Business Trends and Why Do They Matter . Business trends are recognizable patterns in technology, customer behaviour, and the economy that shape how companies grow and compete. Staying aware of these shifts helps you understand what is changing and where to focus your efforts, so you can make decisions proactively rather than reacting to surprises. This awareness is especially valuable for small business owners because you can adapt quickly and align your strategy with what customers and markets are actually demanding. Understanding trends matters for three big reasons: . It helps you reduce risk by anticipating challenges and making adjustments early. . It reveals opportunities to improve efficiency, attract customers, or launch new products while demand is growing. . It supports better long-term planning, giving you clarity and confidence in decisions around hiring , marketing, technology, and investment. . Large enterprises might have teams dedicated to watching the market, but small businesses have an advantage of their own. They can be nimble. You do not need lengthy reports or complex planning to start acting on a trend. Staying curious, paying attention to customer feedback, and trying small tests or pilot ideas can help you respond in a way that fits your business. When you treat trends as information to learn from rather than pressure to keep up with, they become a practical tool for growth. . Technology and Digital Transformation Trends . Technology continues to reshape how businesses operate and deliver value, and that momentum is accelerating as we move into 2026. Artificial intelligence is getting most of the attention, but it is only one part of a much larger digital shift happening across every sector. Small businesses are adopting tools that used to be reserved for large enterprises, from automated accounting systems to smart inventory management and digital customer service. The common thread is simple: technology is moving from being a “nice to have” to becoming a core part of everyday business operations. Understanding these digital trends will help you decide where to invest, how to streamline work, and which tools can make the biggest impact on your bottom line. . Artificial Intelligence and Automation . AI is no longer just a trend; it is becoming part of everyday business operations. In fact, 93% of Canadian businesses surveyed by KPMG report usi",
+        "subject": "market",
+        "event_at": null,
+        "final_url": "https://www.merchantgrowth.com/business-trends-2026/",
+        "fetched_at": "2026-10-24T13:46:58.345916Z",
+        "business_id": "client-zero-s18",
+        "source_type": "first_party",
+        "status_code": 200,
+        "content_hash": "28bdcc70627d9e0ca5a6f4588bae473835deeb0e6a474ea99644914c7c2aa063",
+        "published_at": "2026-01-06T19:48:04Z",
+        "material_name": null
+      },
+      {
+        "id": "a4448f6867fc5cafcfdc3ecb20d933ffd236fb31fe00a6ffd33ce0968c2635c4",
+        "url": "https://myquoteiq.com/top-10-crms-with-built-in-lead-generation-for-contractors-in-2026/",
+        "public": true,
+        "content": "Top 10 CRMs With Built-In Lead Gen For Contractors | QuoteIQ Skip to content QuoteIQ . Features . Close Features Open Features . Job Tools . Estimates . Create and send professional estimates. . Invoicing . Send, track and collect invoices. . QuoteIQ Cam . Capture and document every job with ease. . Scheduling . Schedule jobs to your calendar in seconds. . Inspection Forms . Create and complete inspection reports. . MapMeasure Pro . Measure and price properties instantly. . Business Control Center . Business Analytics . Real-time insight into your performance. . EmployeeHub . Assign, schedule & pay employees. . Virtual Call Team . Never miss a call with 24/7 AI call assistant. . ClientHub . Send and keep messages inside QuoteIQ. . InstaQuote . Allow customers to create estimates themselves. . InstaSchedule . Let clients schedule appointments themselves. . Business Growth . Review Multiplier . Send automated review requests. . Email & Text Automation . Send automated follow-ups, discounts, & more. . Mass Campaigns . Message your entire contacts list in a few clicks. . AI Website Builder . Create a professional business website in minutes. . New Features . Pipelines . Track deals & forecast revenue visually. . Inventory Management . Track materials across trucks & warehouses. . See All Features . Pricing . Resources . Close Resources Open Resources . Learn . Blog . Tips, updates & insights to grow your business. . Free Blueprints & Guides . Step-by-step tools to help you win more jobs. . Tutorial Videos . Learn how to use every feature of QuoteIQ. . Surveys & Case Studies . Real stories and stats from successful users. . About Us . Learn who we are & why we built QuoteIQ. . Community . Facebook User Group . Connect with and get advice from other QuoteIQ users. . Competitor Comparisons . See how QuoteIQ compares to it’s top competitors. . QuoteIQ Partners . Work with trusted partners that support your growth. . Affiliate Program . Earn 40% commissions by sharing QuoteIQ with others. . Press & Media . Brand assets and coverage about QuoteIQ’s journey. . Support . Help Center . Answers to common questions and how-to guides. . Schedule A Demo . Book a personalized walkthrough with our team. . Contact Us . Need help? Get in touch with our support team. . Achieve More . Help Center . Find the fastest answers to your app questions. . Affiliate Program . Promote QuoteIQ & earn 40% commissions! . See All Resources . Industries . Close Industries Open Industries . Electrical . HVAC . Appliance . Line Striping . Plumbing . Handyman . Gen. Contractor . Sealcoating . Pressure Wash . Lawn Care . Irrigation . Snow Removal . Window Clean . Landscaping . Tree Care . Maid Service . Painting . Pool . Roofing . Holiday Lighting . Pest Control . Garage Door . Concrete . Remodeling . See All Industries . Login . Start Free Trial . Demo / Support . (912) 913-7154 . Login . Top 10 in 2026 · From the QuoteIQ Team Top 10 CRMs with Built-In Lead Generation for Contractors in 2026 . Plenty of CRMs promise to help you grow. Very few actually find you customers. We sorted 10 contractor CRMs by what their lead generation really does: sourcing new prospects, running your marketing, or turning inbound calls and forms into booked jobs. . By Mike Vidan, Co-Founder of QuoteIQ · Updated October 2026 . Schedule a Demo Start Free Trial . Quick Answer The best CRM with built-in lead generation for contractors in 2026 is QuoteIQ. Its Atlas map lets you search a ZIP code or a drawn area for local businesses by type, see the exact count for free, and pay cents per business to unlock names, phone numbers and websites. You can then turn any lead into a deal, estimate or job without leaving the app. ServiceTitan’s Marketing Pro is the strongest ad-and-attribution engine for larger teams, Jobber and Workiz suit shops whose leads already arrive inbound, and Pipedrive or SPOTIO fit outbound sales teams. Atlas comes with every QuoteIQ plan; leads are billed per unlock. . The Short Version . Best overall: QuoteIQ. Atlas Lead Generator, door knocking and lead-source tracking on every plan from $29.99/mo, with leads unlocking at $0.12–$0.25 per business. . Best for larger teams that buy ads: ServiceTitan. Marketing Pro adds campaigns, call tracking and ad attribution, but it is quote-only and sold as an add-on. . Best for converting demand you already have: Jobber or Housecall Pro. Booking, reviews and follow-up are strong, but neither will find new customers on its own. . Best for outbound sales to commercial buyers: Pipedrive (Prospector) or SPOTIO (territory maps and business data for field teams). . Best on a tight budget: Contractor+. It has a free plan and a $29/mo Pro plan, with Angi leads landing on an Opportunities board. . Feature to prioritize: lead-source tracking. Whatever you buy, tag every lead with where it came from, so you can judge cost per booked job instead of cost per lead. . 10 Best CRMs with Built-In Lead Generation at a Glance . Rank Pl",
+        "subject": "market",
+        "event_at": null,
+        "final_url": "https://myquoteiq.com/top-10-crms-with-built-in-lead-generation-for-contractors-in-2026/",
+        "fetched_at": "2026-10-24T13:38:09.905455Z",
+        "business_id": "client-zero-s18",
+        "source_type": "first_party",
+        "status_code": 200,
+        "content_hash": "e2c0b0928d890eb97efbc026790615f0306a923641ecad3c75fe0ad5b3601579",
+        "published_at": "2026-10-08T19:24:53Z",
+        "material_name": null
+      },
+      {
+        "id": "15bd1645b5f9f27980cecba71f1eee4239fa0e15ac1a64ff2161cc47b9319f94",
+        "url": "https://activeprospect.com/blog/lead-provider-company/",
+        "public": true,
+        "content": "The top 10 lead provider companies for lead buyers - ActiveProspect Skip to content . Platform By Platform Area Compliance Reduce risk and build buyer trust with defensible, verified consent . Lead Orchestration Automate lead routing and connect every system in your stack . Data & Insights Verify every lead with data you can act on before it reaches your CRM . Partner Build trust with buyers and grow your revenue as a certified partner . By Product TrustedForm Certify consent and prove lead quality with independent, third-party verification . LeadConduit Validate and route leads in real time to keep your CRM clean . Integrations & Add-ons Inbound Facebook Lead Ads . Angi . Thumbtack . LendingTree . Google Lead Forms . See full list > . Outbound Salesforce . Hubspot . Hatch . Convoso . LeadPerfection . See full list > . Add-Ons Webbula . Blacklist Alliance . Trestle . BriteVerify . Anura . See full list > . Solutions I am a... Buyer Filter out bots and non-compliant leads before they reach your CRM . Seller Prove lead quality and build buyer trust with independent certification . Originator Certify consent and turn your traffic into leads buyers trust . By Industry Insurance . Home services . Financial services . Legal . Education . CPG . Technology & SaaS . Media . Agency . By Use Case Streamline & scale . ROI & optimization . Trust & transparency . Risk mitigation . By Team Marketing . Compliance & legal . Data & intelligence . Technology . Consent you can prove . TrustedForm safeguards your lead program with certified, timestamped proof of consent. . Features by Volume Less than $50k . Greater than $50k . Support Customer support Zendesk knowledge base Find answers to common questions in our self-serve help center . Create a support ticket Submit a ticket and get help from our support team . Documentation Getting started . Troubleshooting & FAQs . API Documentation . Customer Experience Success plans . Professional services . Customer success . Case studies . How DMi Partners scaled faster with smarter lead operations . AGENCY . Charcoal cut costs by thousands with better lead transparency . INSURANCE . Resources Explore Blog Get the latest industry insights, product updates, and lead gen strategies . Customer stories See proven results from ActiveProspect customers . Events Find out where our team is headed next and join us in person . Webinars Watch expert-led sessions on compliance, lead quality, and ROI . Learn more On the record with Steve Rafferty . Data decoded . Glossary . Podcast . Whitepapers . Videos . Get Connected . Connect with new sellers . Search our directory of trusted lead sellers by specialty and location to find your next partner . Get connected → . Start certifying leads you generate . Create TrustedForm certificates on every lead you originate and prove quality from the start . Set up now → . Become a Certified Partner . Get certified as a publisher partner and gain access to more buyers looking for quality leads . Get qualified → . Join Lead Gen Alliance Slack Community . Connect with lead gen pros to share insights, solve challenges, and learn from peers . Join now → . Pricing . Platform By Platform Area Compliance Reduce risk and build buyer trust with defensible, verified consent . Lead Orchestration Automate lead routing and connect every system in your stack . Data & Insights Verify every lead with data you can act on before it reaches your CRM . Partner Build trust with buyers and grow your revenue as a certified partner . By Product TrustedForm Certify consent and prove lead quality with independent, third-party verification . LeadConduit Validate and route leads in real time to keep your CRM clean . Integrations & Add-ons Inbound Facebook Lead Ads . Angi . Thumbtack . LendingTree . Google Lead Forms . See full list > . Outbound Salesforce . Hubspot . Hatch . Convoso . LeadPerfection . See full list > . Add-Ons Webbula . Blacklist Alliance . Trestle . BriteVerify . Anura . See full list > . Solutions I am a... Buyer Filter out bots and non-compliant leads before they reach your CRM . Seller Prove lead quality and build buyer trust with independent certification . Originator Certify consent and turn your traffic into leads buyers trust . By Industry Insurance . Home services . Financial services . Legal . Education . CPG . Technology & SaaS . Media . Agency . By Use Case Streamline & scale . ROI & optimization . Trust & transparency . Risk mitigation . By Team Marketing . Compliance & legal . Data & intelligence . Technology . Consent you can prove . TrustedForm safeguards your lead program with certified, timestamped proof of consent. . Features by Volume Less than $50k . Greater than $50k . Support Customer support Zendesk knowledge base Find answers to common questions in our self-serve help center . Create a support ticket Submit a ticket and get help from our support team . Documentation Getting started . Troubleshooting & FAQs . API Documentation . Customer Experience S",
+        "subject": "market",
+        "event_at": null,
+        "final_url": "https://activeprospect.com/blog/lead-provider-company/",
+        "fetched_at": "2026-10-24T13:47:03.014959Z",
+        "business_id": "client-zero-s18",
+        "source_type": "first_party",
+        "status_code": 200,
+        "content_hash": "9099f79229e91ac83dc1050fb6159513ab6e0456d63ad98ac7c17dc53b388907",
+        "published_at": "2026-07-29T12:00:00Z",
+        "material_name": null
+      },
+      {
+        "id": "06d541f03f3ed70d4460b7c6d8b2e0c8ff59b121699b1a0253b30871b8a809d1",
+        "url": "https://www.baadigi.com/compare/best-lead-generation-companies-for-contractors",
+        "public": true,
+        "content": "Best Lead Generation Companies for Contractors | BaaDigi . BAA DIGI About Us . How We Work All Growth Engines Pricing & Plans The Predictable Work Engine™ Level 1: The Foundation Engine™ Level 2: The Stability Engine™ Level 3: The Predictability Engine™ Level 4: The Market Control Engine™ Restaurant Edition . Web Design Next.js Web Design Why Next.js Beats WordPress AI Website Management · $97/mo Website Maintenance Services Website Management Services . Tools All Tools AI Prompt Library AI Visibility & Citation Finder Agentic Browsing Audit llms.txt Generator Menu Readability Check Free Cyber Risk Scan Growth Calculator Contractor Growth Benchmarks Lead Source Profit Comparison Project Case-Study Builder . Portfolio . Blog . Guides All Guides & Research CRM Pricing & Comparisons Website Builders for Contractors Website Maintenance & AI Editing Original Research How We Research . Book a Call (714) 707-2483 . Comparison Guide . Which Lead Generation Companies Are Actually Best for Contractors in 2026? . Almost every \"top 10 lead generation companies\" list for contractors is an affiliate page, and the ranking usually reflects commission rather than performance. This one is organised differently: it lists what each company actually charges, how the lead is delivered, and what that means once you apply real close rates. The important thing to understand before comparing any of them is that nearly all of these companies sell the same product — a shared lead, delivered to several contractors at once — and differ mainly in how they bill you for it. That single fact matters more than any feature list. . By Ryan Goering , CEO & Founder, BaaDigi . Last updated September 2026 . Get a Free Audit (714) 707-2483 . The Short Answer . Quick answer: there is no single best lead generation company for contractors, because these companies sell two genuinely different products. Marketplaces — Angi Leads, Thumbtack, Bark, CraftJack, Networx, Porch, Modernize — sell shared leads delivered to 3–5 contractors at once for roughly $10–$100 per lead, which close at 5–20%. Pay-per-call services like Service Direct charge more per contact ($25–$200+) but deliver a live qualified call. Google Local Services Ads sit in between: pay per qualified lead with the Google Verified badge (called Google Guaranteed until October 2025). Because shared leads close at 5–20%, the true cost per booked job on marketplaces lands around $250–$500 regardless of which one you pick, so choosing between them matters far less than contractors expect. The real decision is whether you need volume immediately, in which case a marketplace is a reasonable short-term tool, or lower cost per booked job over time, which only owned channels deliver — exclusive leads close at 30–50% and get cheaper as rankings compound. . Quick Answers . Do lead generation companies sell the same lead to multiple contractors? . Yes — almost all of them do. Angi Leads, Thumbtack, Bark, CraftJack, Networx, Porch, and Modernize all deliver shared leads, sending the same homeowner to between two and five contractors within minutes. CraftJack shares with the fewest (2–4); Bark goes up to five. This is the single most important thing to establish before signing with any contractor lead generation company, because sharing caps your close rate at 5–20% no matter how good your sales process is. Exclusive leads, where the homeowner contacted you specifically, close at 30–50%. . Which lead generation company has the lowest cost per lead for contractors? . CraftJack is typically lowest at $10–$50 per lead, with Thumbtack starting around $10 per contact and Bark working out to roughly $15–$30 per lead through its credit system. But lowest cost per lead rarely means lowest cost per booked job. A $20 lead that closes at 10% costs $200 per booked job, while a $120 lead closing at 40% costs $300 and arrives without competitors. Divide cost per lead by your close rate for each company before deciding. . What is the cheapest way for a contractor to get leads? . The cheapest leads are the ones you already have and are losing. A fully optimised Google Business Profile costs nothing, a review request system costs nothing, and answering within five minutes makes a contractor 21x more likely to qualify a lead than waiting 30 minutes — yet the average contractor takes over 14 hours to call back. After those, Google Local Services Ads are usually the cheapest paid channel per booked job for licensed trades. Buying marketplace leads is the fastest option, not the cheapest, and mature SEO is cheapest long term at $10–$50 per lead once rankings compound. . Side-by-Side Comparison . Company How you pay Typical cost Lead type You own it? . Angi Leads (formerly HomeAdvisor) Per lead $15–$100+ per lead Shared with 3–5 pros No . Angi Advertising Monthly package $300–$3,000+/mo Shared + paid placement No . Thumbtack Per contact $10–$100 per contact Shared; 30–50% never reply No . Bark Credits ~$2.35/credit, ~6–12 per le",
+        "subject": "market",
+        "event_at": null,
+        "final_url": "https://www.baadigi.com/compare/best-lead-generation-companies-for-contractors",
+        "fetched_at": "2026-10-24T13:47:04.133591Z",
+        "business_id": "client-zero-s18",
+        "source_type": "first_party",
+        "status_code": 200,
+        "content_hash": "760c93749edc95c438d36bf04e880a1ecc0b36728689132c0875e900a4d63145",
+        "published_at": null,
+        "material_name": null
+      },
+      {
+        "id": "ac943561c2554b78baef15164199c5f40da698913ff1c735d5f1d96a811e0c11",
+        "url": "https://www.usehatchapp.com/",
+        "public": true,
+        "content": "Hatch AI Communications Platform, Powered by GPT-Live-1 . Skip to main content . Product . Back . Product capabilities . Platform Overview . An overview of the Hatch platform . Platform Overview Platform Overview . Journey Builder . Reach customers proactively at every stage . Journey Builder Journey Builder . Voice AI . Answer, filter, and book calls, 24/7 . Voice AI Voice AI . Data Bridge . Integrate AI throughout your tech stack . Data Bridge Data Bridge . Messaging AI . Always-on AI for SMS and email conversations . Messaging AI Messaging AI . Command Center . Central hub for CSR tasks, AI, and insights . Command Center Command Center . Knowledge Engine . Train and customize how your AI thinks . Knowledge Engine Knowledge Engine . AI Embed . Embed AI into your processes the way you work . AI Embed AI Embed . High Ground Books 81% of Leads with AI and Saves $300K a Year . Rich Jordan . CEO . See next . Case Study Case Study . Solutions . Back . Solutions . 24/7 Call Handling . Leads, non-leads, and emergencies . 24/7 Call Handling 24/7 Call Handling . Customer Care . Reminders, updates, follow-up, and invoicing . Customer Care Customer Care . Speed to Lead . Book more digital leads, 24/7 . Speed to Lead Speed to Lead . Customer Recontact . Memberships, recurring services, and past customers . Customer Recontact Customer Recontact . Estimate Follow-up . Personalized follow-up to drive more revenue . Estimate Follow-up Estimate Follow-up . Marketing Blasts . One-to-many outreach to leverage large audiences . Marketing Blasts Marketing Blasts . Lead Nurture . Re-engage aged leads, estimates, and no-shows . Lead Nurture Lead Nurture . How Peaden Tripled Conversion on After-Hours Calls with Hatch AI . Reyn Rogers . Director of Strategic Growth . See next . Case Study Case Study . Customers . Back . By industry . Home Services . HVAC, plumbing, electrical, roofing, and more . Home Services Home Services . Home Improvement . Remodeling, windows & doors, flooring, and more . Home Improvement Home Improvement . By role . Built for every operational role . CSRs, managers, and executives/owners . Built for every operational role Built for every operational role . By size . SMB and Mid-Market . Scalable communication for growing teams. . SMB and Mid-Market SMB and Mid-Market . PE, Enterprise, and Multi-Location . Standardize complex communication at scale. . PE, Enterprise, and Multi-Location PE, Enterprise, and Multi-Location . By results . Customer Success Stories . Revenue growth, efficiency gains, and ROI across industries . Customer Success Stories Customer Success Stories . How Pella Grew 30% Without Adding Headcount . Jason Dowdy . COO . See next . Case Study Case Study . Integrations . Back . Lead sources . Yelp . Respond to Yelp leads the moment they come in . Yelp Yelp . Angi . Beat competitors to every new Angi lead . Angi Angi . Google LSA . Turn Google LSA calls into booked jobs . Google LSA Google LSA . Thumbtack . Win Thumbtack leads with instant replies . Thumbtack Thumbtack . CRMs . ServiceTitan . Real-time sync with live ServiceTitan booking . ServiceTitan ServiceTitan . LeadPerfection . AI outreach and booking built on LeadPerfection data . LeadPerfection LeadPerfection . improveit 360 . Trigger AI from Improveit 360 stages . improveit 360 improveit 360 . AccuLynx . Native Acculynx sync, two-way in real time . AccuLynx AccuLynx . How Bone Dry Roofing Closed $7M in Rehash Revenue with Hatch . Matt Tyner . CMO . See next . Case Study Case Study . View all integrations View all integrations . View all integrations . Resources . Back . Blog . Best AI Answering Services for HVAC Companies in 2026 . Best AI Answering Services for HVAC Companies in 2026 Best AI Answering Services for HVAC Companies in 2026 . Best Chiirp alternatives for home service businesses in 2026 . Best Chiirp alternatives for home service businesses in 2026 Best Chiirp alternatives for home service businesses in 2026 . Best Podium alternatives for home service businesses in 2026 . Best Podium alternatives for home service businesses in 2026 Best Podium alternatives for home service businesses in 2026 . View all blogs View all blogs . View all blogs . Playbooks . Hatch’s Product Guide to AI Communication . Can AI Work in High-Ticket, Relationship-Driven Sales? . 2026 AI CSR Cheat Sheet . View all playbooks View all playbooks . View all playbooks . Free Tools . Speed to Lead ROI Calculator . Estimate Follow-Up ROI Calculator . Missed Call Recovery ROI Calculator . View all resources View all resources . View all resources . Pricing . Login Login . Login . Login . Login Login . Get a demo Get a demo . Get a demo . Product . Back . Product capabilities . Platform Overview . An overview of the Hatch platform . Platform Overview Platform Overview . Journey Builder . Reach customers proactively at every stage . Journey Builder Journey Builder . Voice AI . Answer, filter, and book calls, 24/7 . Voice AI Voice AI . Data Bridge . Integrate A",
+        "subject": "market",
+        "event_at": null,
+        "final_url": "https://www.usehatchapp.com/",
+        "fetched_at": "2026-10-24T13:47:04.914139Z",
+        "business_id": "client-zero-s18",
+        "source_type": "first_party",
+        "status_code": 200,
+        "content_hash": "01105776a6e864da2d0b35d1ec26bc7ef554d192c1a31351b1a0431d722241ae",
+        "published_at": null,
+        "material_name": null
+      }
+    ],
+    "subject": "Evorove",
+    "business_id": "client-zero-s18",
+    "subject_kind": "company"
+  },
+  "segments": [
+    "c6"
+  ],
+  "unknowns": [
+    "Whether small local salons and repair shops specifically buy outbound sales automation; sources focus mostly on contractors and home services",
+    "Actual demand, willingness to pay, and conversion results for Evorove's offer",
+    "Whether the private-beta product is available to buyers",
+    "Whether $199/mo covers all usage",
+    "How Evorove compares in effectiveness to the named alternatives",
+    "Buyer roles and decision process at small local businesses (likely the owner, but not evidenced)"
+  ],
+  "confidence": 0.4,
+  "priorities": [
+    "Test whether salons and repair shops, not just contractors, want outbound prospecting and sales conversation automation",
+    "Compare Evorove's $199/mo flat positioning with per-unlock pricing (QuoteIQ Atlas) and per-lead marketplace costs",
+    "Collect customer results or pilot data on booked appointments per cost",
+    "Map how owners currently handle follow-up and lead response"
+  ],
+  "buyer_roles": [],
+  "buying_triggers": [
+    "c4"
+  ],
+  "demand_hypotheses": [
+    "c1",
+    "c4"
+  ],
+  "supporting_claims": [
+    "c1"
+  ],
+  "contradicting_claims": [
+    "c6"
+  ],
+  "competitive_alternatives": [
+    "c2",
+    "c3",
+    "c5"
+  ],
+  "geographic_considerations": []
+}

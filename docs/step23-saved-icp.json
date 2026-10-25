@@ -1,0 +1,91 @@
+[
+  {
+    "segment": "Small local service businesses (including home services) in the US that buy shared marketplace leads or respond slowly to leads",
+    "signals": [
+      "Public complaints about lead marketplace costs or shared leads",
+      "Mentions of missed calls or slow callbacks",
+      "Use of marketplace or lead-form channels"
+    ],
+    "version": 1,
+    "geography": "United States",
+    "buyer_role": "Owner",
+    "buyer_type": "company",
+    "confidence": 0.3,
+    "stable_key": "7f7e3359c8a7c95e80da45ee56872e604b83188115a47dc7720259bc380460f9",
+    "dna_version": "253018cd6d79b7c5b3272dd44fc94523b12e4ddb45f39136a72459074e86beb3",
+    "disqualifiers": [
+      "Large multi-location operator with a sales team",
+      "No marketplace or lead spend",
+      "Outside the US",
+      "Already uses AI follow-up such as Hatch"
+    ],
+    "search_strategy": [
+      "Search contractor and small business forums for complaints about shared leads and slow response",
+      "Look for owner posts comparing cost per booked job",
+      "Screen out larger teams"
+    ],
+    "potential_problem": "Owner may say publicly that marketplace leads are shared, close poorly and cost too much, or that follow-up is slow. Vendor-claimed market statistics apply to contractors, not proven for Evorove's stated segment.",
+    "supporting_claims": [
+      "c3",
+      "c4",
+      "c2",
+      "c5",
+      "diff"
+    ],
+    "solution_mechanism": "Evorove finds prospects outside shared marketplaces and runs the conversation continuously, which may reduce dependence on shared leads and slow follow-up.",
+    "evidence_requirements": [
+      "Public statement by the owner about lead cost, quality or response delays",
+      "Confirmation of small local service business status in the US"
+    ],
+    "attractiveness_assumptions": [
+      "Pain from shared lead costs may transfer beyond contractors, which is unverified",
+      "Owners may prefer a flat monthly price to per-lead billing"
+    ]
+  },
+  {
+    "segment": "Local independent repair shops in the US (phone, appliance, auto or similar)",
+    "signals": [
+      "Public complaints about slow periods or reliance on walk-ins",
+      "Shop run by owner-technician with no sales staff",
+      "Reliance on marketplace or directory leads",
+      "Unanswered messages or reviews mentioning slow replies"
+    ],
+    "version": 1,
+    "geography": "United States",
+    "buyer_role": "Owner or shop manager",
+    "buyer_type": "company",
+    "confidence": 0.25,
+    "stable_key": "29999f9f4a6610f23f52f369c328462023f674c28a490cf1bc3cf52d8d7a5a0d",
+    "dna_version": "253018cd6d79b7c5b3272dd44fc94523b12e4ddb45f39136a72459074e86beb3",
+    "disqualifiers": [
+      "Consistently backlogged",
+      "Part of a large chain",
+      "Outside the US",
+      "Already uses a comparable outbound sales service"
+    ],
+    "search_strategy": [
+      "Search public forums, local groups and shop profiles for owner comments on slow work or lead quality",
+      "Check review pages for slow-response complaints",
+      "Prioritize shops with a clear appointment process"
+    ],
+    "potential_problem": "Owner may say publicly that work is inconsistent and they cannot spend time on sales outreach. This is an inference to test.",
+    "supporting_claims": [
+      "customer_cat",
+      "problem_value",
+      "c3",
+      "c4",
+      "c6"
+    ],
+    "solution_mechanism": "Evorove finds likely customers in the open web and sells toward a booked appointment or drop-off hour, without the owner closing.",
+    "evidence_requirements": [
+      "Public owner or shop statement about slow demand or lack of sales time",
+      "Confirmation of US service location",
+      "Evidence the shop offers bookable appointments"
+    ],
+    "attractiveness_assumptions": [
+      "Repair shops value booked appointments over raw leads",
+      "Flat $199/mo compares well with per-lead costs, though effectiveness is unproven",
+      "Private beta availability may limit access"
+    ]
+  }
+]

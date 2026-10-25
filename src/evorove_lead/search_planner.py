@@ -34,7 +34,7 @@ class ICPHypothesisEngine:
         self.reasoner = reasoner
 
     def generate(self, dna, *, market=None):
-        result = self.reasoner.ask("Name buyers who would say this problem in public. supporting_claims are supplied DNA or market claim ids. Market conclusions guide buyer hypotheses, never establish a particular prospect's need. Do not write survey questions.", HypothesisSet, {"dna": dna.model_dump(mode="json"), "market": market.model_dump(mode="json") if market is not None else None})
+        result = self.reasoner.ask("Name buyers who would say this problem in public. supporting_claims are supplied DNA or market claim ids. Market conclusions guide buyer hypotheses, never establish a particular prospect's need. Use concise search-ready noun phrases for segment, potential_problem and signals; search_strategy should contain short natural web queries with source operators where useful. Derive signals from this business and market, not a fixed looking-for template. Do not write survey questions.", HypothesisSet, {"dna": dna.model_dump(mode="json"), "market": market.model_dump(mode="json") if market is not None else None})
         claims = {c.id for c in dna.evidence.claims}
         if market is not None:
             market.validate_grounding(dna.business_id, market.evidence.sources)
@@ -61,25 +61,41 @@ def _clip(value: str) -> str:
     return " ".join(value.split()).split(".")[0].strip()[:80]
 
 
-def buyer_query_set(problem: str, segment: str, place: str) -> tuple[str, ...]:
-    problem, segment, place = _clip(problem), _clip(segment), _clip(place) or "United States"
+# Remove explanatory scaffolding, not business-specific vocabulary. No industry map.
+_QUERY_NOISE = set("a an the in on at for of to and or that who which with are is be may can would should say says publicly public owner founder statement statements including about search forums vendor claimed market statistics apply much too".split())
+
+
+def _query_terms(value: str, limit: int) -> str:
+    first_sentence = re.split(r"[.!?](?:\s|$)", value, maxsplit=1)[0]
+    tokens = re.findall(r"site:[A-Za-z0-9./_-]+|[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", first_sentence)
+    kept = []
+    for token in tokens:
+        if token.casefold() not in _QUERY_NOISE and token.casefold() not in {t.casefold() for t in kept}:
+            kept.append(token)
+    return " ".join(kept[:limit])
+
+
+def buyer_query_set(problem: str, segment: str, place: str, *, signals=(), strategies=()) -> tuple[str, ...]:
+    segment = _query_terms(segment, 4)
+    problem = _query_terms(problem, 5)
+    place = " ".join((place or "United States").split())
     if not problem or not segment:
         return ()
-    candidates = (
-        f'"{problem}" "{segment}" {place}',
-        f'"looking for" "{problem}" {place}',
-        f'"need" "{problem}" "{segment}" {place}',
-        f'site:reddit.com "{problem}" "{segment}"',
-    )
+    # Each query keeps audience + geography; signals and sources come from ICP.
+    candidates = [f"{segment} {problem}"]
+    candidates.extend(f"{segment} {_query_terms(signal, 5)}" for signal in signals)
+    candidates.extend(f"{_query_terms(strategy, 7)} {segment}" for strategy in strategies)
     kept = []
     for query in candidates:
+        query = f"{query[:max(0, 119 - len(place))].rstrip()} {place}"
         if is_buyer_query(query) and query not in kept:
             kept.append(query)
     return tuple(kept[:4])
 
 
 def buyer_queries_for(hypothesis: ICPHypothesis) -> tuple[str, ...]:
-    return buyer_query_set(hypothesis.potential_problem, hypothesis.segment, hypothesis.geography)
+    return buyer_query_set(hypothesis.potential_problem, hypothesis.segment, hypothesis.geography,
+                           signals=hypothesis.signals, strategies=hypothesis.search_strategy)
 
 
 def buyer_queries_from_dna(dna) -> tuple[str, ...]:

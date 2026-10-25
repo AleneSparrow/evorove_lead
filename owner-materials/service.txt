@@ -1,4 +1,5 @@
-Sales automation and lead generation for small local service businesses.
-Evorove finds people who fit the business in the open web, puts them on a sales board with a reason, and sells until the deal closes or an appointment is booked.
-It also serves independent salons.
-It helps local repair shops.
+Evorove automates lead generation and sales for small SaaS and online businesses in the US.
+It finds potential customers on the open web, analyzes their fit, and adds them to a CRM board with a grounded reason.
+Evorove then handles sales conversations through closing, with progress visible in the CRM.
+It offers a 7-day free trial with no demo required, followed by a $199/month subscription.
+The goal of the first week is to show results such as replies and bookings.
