@@ -21,7 +21,7 @@ from evorove_lead.sqlalchemy_models import Base
 from evorove_lead.web_search import SearchHit
 from tests.test_source_core import NOW, FakeHTTP, setup
 
-ZERO = client_zero_analysis("client-zero", "Evorove automates lead generation and sales for small SaaS and online businesses in the US.")
+ZERO = client_zero_analysis("client-zero", "Evorove finds likely buyers for US B2B businesses with high-value deals that want to replace or avoid a sales team.")
 
 
 def test_catalog_records_permission_and_does_not_enable_a_forbidden_source():
@@ -47,7 +47,9 @@ def test_plans_follow_the_client_and_leave_hacker_news_out():
     assert [item.source_id for item in dentist.selected] == ["searxng_web"]
     assert [item.source_id for item in pets.selected] == ["searxng_web"]
     assert all(item.source_id != "hn_show" for item in zero.selected)
-    assert "saas" in zero.selected[0].queries[0].casefold()
+    assert "b2b" in zero.selected[0].queries[0].casefold()
+    assert "saas" not in zero.selected[0].queries[0].casefold()
+    assert "site" not in zero.selected[0].queries[0].casefold().split()
     assert "united states" in zero.selected[0].queries[0].casefold()
     assert "austin" in dentist.selected[0].queries[0].casefold()
     assert "dental" in dentist.selected[0].queries[0].casefold()
@@ -75,13 +77,13 @@ def test_model_plan_is_limited_to_enabled_sources_and_cached():
             self.calls += 1
             assert max_tokens == 800 and effort == "medium"
             assert "product_hunt" not in system and "osm_overpass" not in system
-            assert "searxng_web" in user and "small SaaS" in user
+            assert "searxng_web" in user and "B2B" in user and "small SaaS" not in user
             return CompletionReply(json.dumps({"selected": [{"id": "searxng_web", "why": "The buyer's own site is on the public web.",
-                "queries": ["small SaaS United States"], "filters": {"geography": "United States"}}],
+                "queries": ["US B2B businesses United States"], "filters": {"geography": "United States"}}],
                 "excluded": [{"id": "hn_show", "why": "Side projects on Hacker News are not this buyer."}]}), 120, 60)
     completion = Completion()
     plan = plan_with_model(engine, ZERO, completion, clock=lambda: NOW)
-    assert completion.calls == 1 and plan.model_used and plan.selected[0].queries == ("small SaaS United States",)
+    assert completion.calls == 1 and plan.model_used and plan.selected[0].queries == ("US B2B businesses United States",)
     assert plan_with_model(engine, ZERO, completion, clock=lambda: NOW).brief_hash == plan.brief_hash
     assert completion.calls == 1
     allowed = validate_model_plan(ZERO, {"selected": [{"id": "hn_show", "why": "This brief is about the Hacker News community.", "queries": []}]})

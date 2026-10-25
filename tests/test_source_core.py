@@ -127,6 +127,8 @@ def test_collect_once_contact_mx_and_offline_analysis(monkeypatch):
     assert report['cost_usd']==0.002025
     assert touches[0]['payload']['quote']==make_signal().quote
     assert touches[0]['payload']['signal_type']=='ask_hn_need'
+    assert touches[0]['payload']['signal_temperature']=='warm'
+    assert touches[0]['payload']['detected_signal']=='ask_hn_need'
     assert touches[0]['payload']['source_url']==make_signal().source_url
     assert touches[0]['payload']['signal_date'] and touches[0]['payload']['evidence_fetched_at']
     assert touches[0]['cycle']==1 and touches[0]['kind']=='assembled'

@@ -184,35 +184,50 @@ def preflight(*, probe_search=False):
 
 
 def client_zero_source_analysis(business_id: str):
-    """Brief already on disk. The stale local-service hypotheses are not this ICP."""
+    """Brief already on disk. The buyer is a US B2B business with a high-value deal."""
     from evorove_lead.source_planner import client_zero_analysis
     path = OWNER_MATERIALS_DIR / "service.txt"
     brief = path.read_text(encoding="utf-8") if path.is_file() else ""
-    if "small SaaS and online businesses" not in brief:
+    if "US B2B businesses" not in brief:
         raise RuntimeError("client 0 brief is missing the confirmed ICP")
     return client_zero_analysis(business_id, brief)
 
 
-def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=False) -> dict:
+def resolve_source_plan(engine, analysis, playbook):
+    """A playbook replaces the model planner. Without one, use the cache or the catalog rules."""
+    from evorove_lead.lead_playbooks import plan_from_playbook
+    from evorove_lead.source_planner import deterministic_source_plan, load_cached_plan
+    if playbook is not None:
+        return plan_from_playbook(analysis, playbook)
+    return load_cached_plan(engine, analysis.business_id, analysis.brief_hash()) or deterministic_source_plan(analysis)
+
+
+def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=False, niche="") -> dict:
     """Separate collect-once mode. Explicit source DB, no CRM sink or old research.
 
-    Collection follows the cached model plan for this brief hash, or the
-    deterministic catalog plan when that cache is empty. It does not call the model.
+    `--niche` selects a lead playbook and does not call the model. Without it,
+    collection follows the cached model plan for this brief hash, or the
+    deterministic catalog plan when that cache is empty.
     """
     from sqlalchemy import create_engine
+    from evorove_lead.lead_playbooks import playbook_by_id
     from evorove_lead.source_adapters import PublicSourceHTTP
     from evorove_lead.source_collection import SourceCollector
     from evorove_lead.source_analysis import SourceAnalyzer
-    from evorove_lead.source_planner import adapters_for_plan, deterministic_source_plan, load_cached_plan, plan_with_model
+    from evorove_lead.source_planner import adapters_for_plan, plan_with_model
+    playbook = playbook_by_id(niche) if niche else None
     db_url = os.getenv('SOURCE_DATABASE_URL')
     if not db_url:
         raise RuntimeError('SOURCE_DATABASE_URL is required for source mode')
     business_id = os.getenv('EVOROVE_CLIENT_ZERO_BUSINESS_ID') or 'client-zero'
     engine = create_engine(db_url, future=True)
     analysis = client_zero_source_analysis(business_id)
-    summary = {'mode':'source_dry_run','business_id':business_id,'crm_writes':0,'cold':0,'messages_sent':0}
+    summary = {'mode':'source_dry_run','business_id':business_id,'niche':playbook.id if playbook else '',
+        'crm_writes':0,'cold':0,'messages_sent':0}
     if plan_only:
-        if os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':
+        if playbook is not None:
+            plan = resolve_source_plan(engine, analysis, playbook)
+        elif os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':
             model = os.getenv('ANTHROPIC_MODEL')
             if model != 'claude-sonnet-5-5':
                 raise RuntimeError('source mode requires explicitly priced claude-sonnet-5-5')
@@ -222,14 +237,16 @@ def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=Fals
             from evorove_lead.research_config import AnthropicResearchCompletion
             plan = plan_with_model(engine, analysis, AnthropicResearchCompletion(key, model, effort='medium'))
         else:
-            plan = deterministic_source_plan(analysis)
+            plan = resolve_source_plan(engine, analysis, None)
         summary['plan'] = plan.as_dict()
         engine.dispose()
         return summary
     if not analyze_only:
-        plan = load_cached_plan(engine, business_id, analysis.brief_hash()) or deterministic_source_plan(analysis)
+        plan = resolve_source_plan(engine, analysis, playbook)
         summary['plan'] = {'model_used': plan.model_used, 'brief_hash': plan.brief_hash,
-            'selected': [item.source_id for item in plan.selected]}
+            'niche': playbook.id if playbook else '',
+            'selected': [item.source_id for item in plan.selected],
+            'queries': [query for item in plan.selected for query in item.queries]}
         http = PublicSourceHTTP(max_requests=int(os.getenv('SOURCE_MAX_REQUESTS','40')))
         search = None
         if any(item.source_id == 'searxng_web' for item in plan.selected):
@@ -240,7 +257,7 @@ def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=Fals
         summary['http_requests'] = http.count
     if not collect_only:
         classifier = None
-        if os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':
+        if playbook is None and os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':
             model = os.getenv('ANTHROPIC_MODEL')
             if model != 'claude-sonnet-5-5':
                 raise RuntimeError('source mode requires explicitly priced claude-sonnet-5-5')
@@ -249,7 +266,7 @@ def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=Fals
                 raise RuntimeError('ANTHROPIC_API_KEY is required for paid analysis')
             from evorove_lead.research_config import AnthropicResearchCompletion
             classifier = AnthropicResearchCompletion(key, model, effort='medium')
-        report, _cold_ready = SourceAnalyzer(engine,classifier).run(business_id)
+        report, _cold_ready = SourceAnalyzer(engine, classifier, playbook=playbook).run(business_id)
         summary['analysis'] = report
     engine.dispose()
     return summary
@@ -265,7 +282,17 @@ def main() -> None:
     parser.add_argument("--collect-only", action="store_true")
     parser.add_argument("--analyze-only", action="store_true")
     parser.add_argument("--plan-sources", action="store_true")
+    parser.add_argument("--list-niches", action="store_true")
+    parser.add_argument("--niche", default="")
     args = parser.parse_args()
+    if args.list_niches:
+        if args.source_dry_run or args.preflight or args.research_dry_run or args.probe_search or args.niche:
+            parser.error("--list-niches only lists playbooks")
+        from evorove_lead.lead_playbooks import niche_menu
+        print(json.dumps(niche_menu(), indent=2))
+        return
+    if args.niche and not args.source_dry_run:
+        parser.error("--niche requires --source-dry-run")
     if args.collect_only and args.analyze_only:
         parser.error("choose only one of --collect-only and --analyze-only")
     if args.plan_sources and (args.collect_only or args.analyze_only):
@@ -273,7 +300,7 @@ def main() -> None:
     if (args.collect_only or args.analyze_only or args.plan_sources) and not args.source_dry_run:
         parser.error("--collect-only, --analyze-only, and --plan-sources require --source-dry-run")
     if args.source_dry_run:
-        print(json.dumps(run_source_dry_run(collect_only=args.collect_only, analyze_only=args.analyze_only, plan_only=args.plan_sources), indent=2))
+        print(json.dumps(run_source_dry_run(collect_only=args.collect_only, analyze_only=args.analyze_only, plan_only=args.plan_sources, niche=args.niche), indent=2))
         return
     if args.preflight:
         report = preflight(probe_search=args.probe_search)

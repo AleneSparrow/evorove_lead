@@ -11,18 +11,34 @@ from sqlalchemy.orm import Session
 from evorove_lead.candidate import accept_candidate
 from evorove_lead.crm_touch import assembled_touch, stable_person_id
 from evorove_lead.handoff import Cycle1Handoff
+from evorove_lead.lead_playbooks import screen_lead
 from evorove_lead.source_core_models import SourceCompany, SourcePerson, SourceContact, SourceRawPage, SourceSignal
 
 _US = re.compile(r'\b(?:based|headquartered|located|office|address)\b.{0,65}\b(?:US|USA|United States|U\.S\.|San Francisco|New York|California)\b', re.I)
 _SOFTWARE = re.compile(r'\b(?:SaaS|software|online business|digital product|web app|platform)\b', re.I)
+_WAREHOUSE_TEMPERATURE = {
+    'sales_hiring': ('hot', 'warm'),
+    'ask_hn_need': ('warm', 'cold'),
+    'hn_hiring': ('warm', 'cold'),
+    'show_hn_launch': ('cold', 'cold'),
+    'web_mention': ('cold', 'cold'),
+}
+
+def warehouse_temperature(signal_type: str, *, age_days: int, context_only: bool) -> str:
+    """Temperature for a stored signal when no playbook is attached. No model."""
+    event, context = _WAREHOUSE_TEMPERATURE.get(signal_type, ('cold', 'cold'))
+    limit = 90 if context_only else 30
+    if age_days < 0 or age_days > limit:
+        return 'cold'
+    return context if context_only else event
 
 def _utc(value):
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 class SourceAnalyzer:
     def __init__(self, engine, classifier=None, *, clock=lambda: datetime.now(timezone.utc), max_candidates=None,
-                 max_cost_microusd=None, input_rate=3, output_rate=15):
-        self.engine, self.classifier, self.clock = engine, classifier, clock
+                 max_cost_microusd=None, input_rate=3, output_rate=15, playbook=None):
+        self.engine, self.classifier, self.clock, self.playbook = engine, classifier, clock, playbook
         self.max_candidates = int(max_candidates if max_candidates is not None else os.getenv('SOURCE_ANALYZE_TOP_N','5'))
         self.max_cost = int(max_cost_microusd if max_cost_microusd is not None else os.getenv('SOURCE_MAX_COST_MICROUSD','300000'))
         self.input_rate, self.output_rate = input_rate, output_rate
@@ -31,6 +47,7 @@ class SourceAnalyzer:
     def run(self, business_id: str) -> tuple[dict, tuple[dict, ...]]:
         """DB is the only evidence input. Produces Cold-ready payloads, never delivers."""
         now = self.clock()
+        playbook = self.playbook
         counts = Counter();ranked=[];seen=set();seen_emails=set();cost=0;costs=[];cold=[]
         with Session(self.engine) as db:
             signals = db.scalars(select(SourceSignal).where(SourceSignal.business_id==business_id).order_by(SourceSignal.signal_date.desc())).all()
@@ -44,7 +61,11 @@ class SourceAnalyzer:
                 if signal.is_advertisement:
                     counts['advertisement']+=1;continue
                 age=now-_utc(signal.signal_date)
-                if age<timedelta(0) or age>timedelta(days=90 if signal.context_only else 30):
+                if playbook is None:
+                    window = 90 if signal.context_only else 30
+                else:
+                    window = playbook.context_days if signal.context_only else playbook.event_days
+                if age<timedelta(0) or age>timedelta(days=window):
                     counts['stale_signal']+=1;continue
                 pages=db.scalars(select(SourceRawPage).where(SourceRawPage.business_id==business_id,SourceRawPage.domain==signal.domain)).all()
                 fresh=[p for p in pages if _utc(p.expires_at)>now and p.sha256 and p.text]
@@ -60,19 +81,42 @@ class SourceAnalyzer:
                 evidence=' '.join([signal.source_text,*[p.text for p in fresh]])
                 if not any(_US.search(p.text) for p in fresh):
                     counts['country_not_confirmed']+=1;continue
-                if not _SOFTWARE.search(evidence):
-                    counts['not_saas_or_online']+=1;continue
                 if signal.quote not in signal.source_text:
                     counts['ungrounded_quote']+=1;continue
+                if playbook is None:
+                    if not _SOFTWARE.search(evidence):
+                        counts['not_saas_or_online']+=1;continue
+                    temperature = warehouse_temperature(signal.signal_type, age_days=age.days, context_only=bool(signal.context_only))
+                    segment, hypothesis, reason = 'small US SaaS or online business', 'source-core', ''
+                    kind = signal.signal_type
+                else:
+                    decision = screen_lead(playbook, evidence=evidence, domain=signal.domain, quote=signal.quote,
+                        age_days=age.days, context_only=bool(signal.context_only))
+                    if decision.rejection:
+                        counts[decision.rejection]+=1;continue
+                    temperature, segment, hypothesis, reason = decision.temperature, decision.segment, playbook.id, decision.reason
+                    kind = decision.kind
                 if contact.email.casefold() in seen_emails:
                     counts['duplicate_person']+=1;continue
                 seen_emails.add(contact.email.casefold())
-                score={'ask_hn_need':90,'hn_hiring':70,'sales_hiring':70,'show_hn_launch':40}.get(signal.signal_type,30)
+                if playbook is None:
+                    score={'ask_hn_need':90,'hn_hiring':70,'sales_hiring':70,'show_hn_launch':40}.get(signal.signal_type,30)
+                else:
+                    score={'sales_hire':90,'open_sales_role':88,'demand_complaint':84,'new_offer':60,'team_growth':55,'marketing_change':50}.get(kind,30)
                 score+=max(0,30-age.days)
-                ranked.append((score,signal,company,person,contact,max(fresh,key=lambda p:p.fetched_at)))
+                ranked.append((score,signal,company,person,contact,max(fresh,key=lambda p:p.fetched_at),temperature,segment,hypothesis,reason,kind))
                 counts['rules_passed']+=1
         ranked.sort(key=lambda row:(-row[0],row[1].source_url))
-        for score,signal,company,person,contact,page in ranked[:self.max_candidates]:
+        for score,signal,company,person,contact,page,temperature,segment,hypothesis,reason,kind in ranked[:self.max_candidates]:
+            if playbook is not None:
+                candidate=accept_candidate(identity=contact.email,reason=reason,reason_source=signal.source_url)
+                handoff=Cycle1Handoff.from_candidate(candidate,'email',person_id=stable_person_id(business_id,email=contact.email),hypothesis_id=hypothesis)
+                touch=assembled_touch(business_id,candidate,handoff,segment=segment)
+                touch['payload'].update(signal_type=signal.signal_type,signal_date=_utc(signal.signal_date).isoformat(),
+                    source_url=signal.source_url,quote=signal.quote,reason=reason,evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
+                    source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind)
+                cold.append(touch);counts['cold_ready']+=1
+                continue
             if self.classifier is None:
                 counts['model_unavailable']+=1;continue
             context={'company':company.name,'person':person.name,'role':person.role,'signal_type':signal.signal_type,
@@ -101,7 +145,7 @@ class SourceAnalyzer:
             touch=assembled_touch(business_id,candidate,handoff,segment='small US SaaS or online business')
             touch['payload'].update(signal_type=signal.signal_type,signal_date=_utc(signal.signal_date).isoformat(),
                 source_url=signal.source_url,quote=signal.quote,reason=reason,evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
-                source_id=signal.source_id or signal.source)
+                source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind)
             cold.append(touch);counts['cold_ready']+=1
         report={'signals':len(signals),'rejections':{k:v for k,v in counts.items() if k not in {'rules_passed','model_analyzed','cold_ready'}},
             'rules_passed':counts['rules_passed'],'model_analyzed':counts['model_analyzed'],'cold_ready':counts['cold_ready'],

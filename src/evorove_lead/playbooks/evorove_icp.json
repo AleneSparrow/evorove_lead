@@ -1,0 +1,168 @@
+{
+  "id": "evorove_icp",
+  "title": "Evorove ICP",
+  "version": "2026-10-25",
+  "describes": "lead_segments",
+  "lead_summary": "US B2B businesses with high-value deals that want to replace or avoid a sales team. For client 0 these are Evorove's own buyers.",
+  "client_note": "A playbook names the leads a client wants found. It does not name the client's own industry. Client 0's leads are the companies that could buy Evorove. The subsegments below are searched together, not queued.",
+  "freshness": {"event_days": 30, "context_days": 90},
+  "minimum_usd_per_year": 5000,
+  "subsegments": [
+    {
+      "id": "agencies",
+      "title": "Agencies",
+      "terms": ["marketing agency", "design agency", "development agency", "automation agency"],
+      "queries": [
+        "marketing agency hiring SDR United States",
+        "design agency hiring account executive United States",
+        "development agency hiring sales manager United States",
+        "automation agency hiring business development United States"
+      ]
+    },
+    {
+      "id": "it_services",
+      "title": "IT services and cybersecurity",
+      "terms": ["managed IT", "cybersecurity", "IT consulting"],
+      "queries": [
+        "managed IT services hiring sales United States",
+        "cybersecurity company hiring SDR United States",
+        "IT consulting firm hiring account executive United States",
+        "MSP hiring sales director United States"
+      ]
+    },
+    {
+      "id": "consulting_training",
+      "title": "Consulting and corporate training",
+      "terms": ["management consulting", "corporate training", "leadership training"],
+      "queries": [
+        "management consulting hiring business development United States",
+        "corporate training company hiring sales United States",
+        "B2B consulting firm new service United States",
+        "leadership training company hiring account executive United States"
+      ]
+    },
+    {
+      "id": "recruiting",
+      "title": "Recruiting",
+      "terms": ["recruiting firm", "staffing agency", "executive search"],
+      "queries": [
+        "recruiting firm hiring account executive United States",
+        "staffing agency hiring sales United States",
+        "executive search firm hiring business development United States",
+        "recruiting agency hiring sales director United States"
+      ]
+    },
+    {
+      "id": "b2b_services",
+      "title": "High-ticket B2B services and supply",
+      "terms": ["equipment supplier", "logistics company", "wholesale supplier", "equipment distributor"],
+      "queries": [
+        "industrial equipment supplier hiring sales United States",
+        "B2B logistics company hiring sales director United States",
+        "commercial equipment distributor hiring sales United States",
+        "wholesale supplier hiring account executive United States"
+      ]
+    },
+    {
+      "id": "vertical_saas",
+      "title": "Vertical B2B software",
+      "terms": ["construction software", "logistics software", "manufacturing software", "field service software"],
+      "queries": [
+        "construction software hiring sales United States",
+        "logistics software hiring account executive United States",
+        "manufacturing software hiring sales United States",
+        "field service software hiring sales director United States"
+      ]
+    }
+  ],
+  "signals": [
+    {
+      "id": "sales_hire",
+      "event_temperature": "hot",
+      "context_temperature": "warm",
+      "pattern": "\\bhiring\\b.{0,60}\\b(?:sdr|salesperson|sales manager|sales director|sales leader|vp of sales|head of sales|account executive|business development)\\b",
+      "how": "A dated quote says the company is hiring a salesperson, SDR, or sales leader. The Cold reason is that sentence. An event no older than 30 days is hot. The same words stored as context and no older than 90 days are warm."
+    },
+    {
+      "id": "open_sales_role",
+      "event_temperature": "hot",
+      "context_temperature": "warm",
+      "pattern": "\\b(?:now hiring|we are hiring|we're hiring)\\b.{0,60}\\b(?:sales|sdr|account executive|business development)\\b|\\b(?:open|new)\\s+(?:sales\\s+)?(?:role|position|job)\\b|\\bjoin our sales team\\b",
+      "how": "A dated quote says a sales role is open. Event within 30 days is hot. Context within 90 days is warm. The catalog has no enabled job board, so this is visible only when the quote itself says it."
+    },
+    {
+      "id": "demand_complaint",
+      "event_temperature": "hot",
+      "context_temperature": "warm",
+      "pattern": "\\b(?:not enough (?:clients|customers|leads)|need more (?:clients|customers|leads)|pipeline is (?:thin|empty|slow|dry)|sales team is (?:too )?expensive|can(?:not|'t) afford (?:a |to hire )?(?:sales|an sdr|a salesperson))\\b",
+      "how": "A dated public sentence says there are not enough clients or customers, or that a sales team is too expensive. Event within 30 days is hot. Context within 90 days is warm."
+    },
+    {
+      "id": "new_offer",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\b(?:launch(?:ed|ing)?|introduc(?:ed|ing))\\b.{0,50}\\b(?:service|practice|offering|line)\\b|\\bnew (?:service|practice|offering)\\b|\\bnow offering\\b",
+      "how": "A dated quote says a service, practice, offering, or line was launched or is new. Event within 30 days is warm. Context within 90 days is cold."
+    },
+    {
+      "id": "team_growth",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\b(?:growing (?:the|our) team|team is growing|we are growing|we're growing|new office)\\b|\\badded \\d+ (?:people|employees|hires)\\b",
+      "how": "A dated quote says the team is growing, a new office opened, or people were added. Event within 30 days is warm. Context within 90 days is cold."
+    },
+    {
+      "id": "marketing_change",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\b(?:hired a (?:marketer|marketing lead)|new marketing (?:lead|director|manager)|new cmo|rebrand(?:ed|ing)?)\\b",
+      "how": "A dated quote says marketing leadership changed or the company rebranded. Event within 30 days is warm. Context within 90 days is cold."
+    }
+  ],
+  "deal_size": {
+    "how": "At least one public sign must show a deal at or above $5000 a year. No model is asked. A published from-price below the floor rejects the company even when another sign is present. Dollar amounts that are not written as from, starting at, or starts at are ignored, so an incidental price is not treated as the deal.",
+    "signs": [
+      {"id": "book_a_call", "pattern": "\\b(?:book|schedule)\\s+a\\s+(?:call|consultation)\\b|\\btalk to sales\\b"},
+      {"id": "custom_pricing", "pattern": "\\b(?:custom pricing|contact us for pricing|request a quote|pricing on request)\\b"},
+      {"id": "from_price", "method": "from_price"},
+      {"id": "case_study", "pattern": "\\b(?:case study|case studies|clients include)\\b", "how": "The rule sees the phrase. It does not check that the named clients are B2B."},
+      {"id": "team", "method": "team_larger_than_one", "how": "team of 2 or more, or our team or leadership team together with at least two distinct roles. The words our team alone do not pass."}
+    ]
+  },
+  "exclusions": [
+    {"id": "not_us", "method": "already_applied", "how": "Analysis already requires a fresh page that places the company in the US. A non-US fact never reaches the playbook rules."},
+    {"id": "advertisement", "method": "already_applied", "how": "A stored advertisement flag is rejected before the playbook rules."},
+    {"id": "platform", "method": "platform_domain", "how": "The company domain is a platform host, so it is not the company's own site."},
+    {"id": "aggregator", "method": "domain_list", "domains": ["indeed.com", "ziprecruiter.com", "glassdoor.com", "monster.com", "simplyhired.com", "builtin.com", "wikipedia.org", "crunchbase.com", "greenhouse.io", "lever.co", "workable.com", "ashbyhq.com", "jobleads.com", "joinhandshake.com", "theimpactjob.com", "justsalesjobs.com", "careersingovernment.com", "geeksforgeeks.org", "wikihow.com", "zhihu.com", "baidu.com", "revenuebase.ai"], "how": "A job board, directory, or encyclopedia host is not the company. needs_research: the catalog has no enabled job board whose terms allow collection."},
+    {"id": "regulated", "pattern": "\\b(?:law firm|law office|attorney at law|medical practice|our clinic|we are a bank|insurance agency|financial advisory firm)\\b", "how": "The page presents the company as a law, medical, banking, or insurance practice. A software page that only names those buyers can match the same words; that is a conservative miss, not a model judgment."},
+    {"id": "local_consumer", "pattern": "\\b(?:dental practice|dental office|hair salon|nail salon|auto repair shop|plumbing company|roofing company)\\b", "how": "The page presents the company as a local service for private individuals."},
+    {"id": "b2c", "pattern": "\\b(?:for homeowners|for families|for consumers|add to cart|shop now|direct to consumer)\\b", "how": "The page sells to households or runs a consumer shop."},
+    {"id": "saas_to_saas", "pattern": "\\b(?:saas for saas|for saas companies|developer platform|developer tool|built for developers)\\b", "how": "The offer is software sold to software companies or developers. That loop is outside the first wave."},
+    {"id": "low_ticket", "method": "low_ticket", "how": "A from, starting at, or starts at price annualizes below $5000. A monthly figure is multiplied by 12. One low published price rejects the page even if a higher price or book a call is also there."}
+  ],
+  "sources": [
+    {"id": "searxng_web", "use": "collect", "note": "Public web search can reach a company page in any of these subsegments. A snippet without a date is skipped, and a platform host is not stored as the company. This is the only enabled source this playbook collects."},
+    {"id": "hn_show", "use": "skip", "note": "Enabled, but Show HN is developers posting projects. That is the SaaS-to-SaaS loop this playbook leaves out. needs_research only if a later sample shows these buyers posting there. Not collected."},
+    {"id": "hn_ask", "use": "skip", "note": "Enabled, but Ask HN is a developer discussion. needs_research only if a later sample shows these buyers asking there. Not collected."},
+    {"id": "hn_hiring", "use": "skip", "note": "Enabled, but the monthly thread is engineering hiring, not a sales, SDR, or sales-leader role. needs_research only if a later sample shows those roles there. Not collected."},
+    {"id": "sec_form_d", "use": "skip", "note": "Enabled filings show a US capital raise, not a sales hire, a new offer, or a public complaint. needs_research whether an issuer in these subsegments is a separate pass. Not collected."},
+    {"id": "osm_overpass", "use": "unavailable", "note": "Disabled because overpass-api.de robots.txt disallows /api/. These leads are not chosen by one city. needs_research only for a later local playbook, and only if collection is permitted."},
+    {"id": "industry_rss", "use": "unavailable", "note": "Disabled: no industry feed was cleared for automatic collection. A trade article would date a new service or a marketing change. needs_research until a feed's terms allow it."},
+    {"id": "yc_directory", "use": "unavailable", "note": "Disabled: Y Combinator terms prohibit scraping and robots. The directory is also the startup loop this playbook leaves out. needs_research does not reopen a forbidden source."},
+    {"id": "indie_hackers", "use": "unavailable", "note": "Disabled: Indie Hackers terms prohibit crawling. The community is founders selling to founders. needs_research does not reopen a forbidden source."},
+    {"id": "reddit", "use": "unavailable", "note": "Disabled: robots.txt says User-agent: * Disallow: /, and a login or key would be required. Public complaints about pipeline or an expensive sales team often appear in forums. needs_research for a different public place whose terms allow collection."},
+    {"id": "product_hunt", "use": "unavailable", "note": "Disabled: robots.txt returned 403 behind a challenge page, so no keyless access was established. Launches there are the product loop this playbook leaves out. needs_research does not reopen it."},
+    {"id": "dev_to", "use": "unavailable", "note": "Disabled: DEV Community terms allow personal, non-commercial, transitory viewing only. The audience is developers. needs_research does not reopen it."}
+  ],
+  "gaps": [
+    {"id": "job_board", "status": "needs_research", "why": "needs_research: the catalog has no enabled job board. An open sales role is collected only when a dated public snippet states it."},
+    {"id": "public_complaint_forum", "status": "needs_research", "why": "needs_research: Reddit is disabled. A complaint about too few clients or an expensive sales team needs another public place whose terms allow collection."},
+    {"id": "trade_press", "status": "needs_research", "why": "needs_research: industry_rss is disabled. A dated article about a new service or a marketing change is not collected."}
+  ],
+  "touch_angles": [
+    "The Cold reason is one verbatim sentence from the dated quote: a sales hire, an open sales role, a new service, team growth, a public complaint about clients or the cost of a sales team, or a marketing change.",
+    "A deal-size sign (book a call, custom pricing, a from-price at or above $5000 a year, a case-study phrase, or a team of more than one) can be stated only by copying the page. It is a fit check. It is not a claim that the company asked for Evorove.",
+    "The US sentence that placed the company can be copied. A country that was not on the page cannot.",
+    "Do not invent a price, a discount, a guarantee, or a legal claim. This repository does not write the letter."
+  ]
+}

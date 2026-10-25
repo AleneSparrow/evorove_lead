@@ -72,13 +72,18 @@ class SourcePlan:
 
 
 def client_zero_analysis(business_id: str, brief: str) -> ClientAnalysis:
-    """The confirmed client-0 brief: small SaaS and online businesses in the US."""
+    """Client 0 sells Evorove to US B2B businesses with high-value deals.
+
+    A niche playbook, when one is selected, replaces this analysis as the
+    source plan. The fields stay so a run without a playbook still has a brief.
+    """
     return ClientAnalysis(business_id=business_id, brief=brief.strip(),
-        customer_categories=("small SaaS and online businesses",), geography="United States",
-        services=("lead generation and sales automation",),
-        icp_segments=("small SaaS and online businesses in the US",),
-        icp_signals=("public site of a small US SaaS or online business",),
-        buyer_role="founder or owner")
+        customer_categories=("US B2B businesses with high-value deals",), geography="United States",
+        services=("lead generation and sales",),
+        icp_segments=("US B2B businesses with high-value deals that want to replace or avoid a sales team",),
+        icp_signals=("hiring a salesperson or publishing a high-value offer",),
+        buyer_role="owner",
+        disqualifiers=("B2C", "low ticket below $5000 a year", "local consumer services", "regulated fields", "SaaS sold to SaaS"))
 
 
 def dentist_example() -> ClientAnalysis:
