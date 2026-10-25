@@ -1,7 +1,7 @@
 {
   "id": "evorove_icp",
   "title": "Evorove ICP",
-  "version": "2026-10-25.2",
+  "version": "2026-10-25.3",
   "describes": "lead_segments",
   "lead_summary": "US B2B businesses with high-value deals that want to replace or avoid a sales team. For client 0 these are Evorove's own buyers.",
   "client_note": "A playbook names the leads a client wants found. It does not name the client's own industry. Client 0's leads are the companies that could buy Evorove. The subsegments below are searched together, not queued.",
@@ -75,7 +75,7 @@
       "id": "open_sales_role",
       "event_temperature": "hot",
       "context_temperature": "warm",
-      "pattern": "\\b(?:now hiring|we are hiring|we're hiring)\\b.{0,60}\\b(?:sales|sdr|account executive|business development)\\b|\\b(?:open|new)\\s+(?:sales\\s+)?(?:role|position|job)\\b|\\bjoin our sales team\\b",
+      "pattern": "\\b(?:now hiring|we are hiring|we're hiring)\\b.{0,60}\\b(?:sales|sdr|account executive|business development)\\b|\\b(?:open|new)\\s+sales\\s+(?:role|position)\\b|\\bjoin our sales team\\b",
       "how": "A dated quote says a sales role is open. Event within 30 days is hot. Context within 90 days is warm. The catalog has no enabled job board, so this is visible only when the quote itself says it."
     },
     {
@@ -105,6 +105,48 @@
       "context_temperature": "cold",
       "pattern": "\\b(?:hired a (?:marketer|marketing lead)|new marketing (?:lead|director|manager)|new cmo|rebrand(?:ed|ing)?)\\b",
       "how": "A dated quote says marketing leadership changed or the company rebranded. Event within 30 days is warm. Context within 90 days is cold."
+    },
+    {
+      "id": "open_marketing_role",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\bhiring\\b.{0,60}\\b(?:marketing manager|marketing director|head of marketing|demand generation|content marketer)\\b|\\b(?:open|new)\\s+marketing\\s+(?:role|position)\\b",
+      "how": "A quote says a marketing role is open. A date on that sentence or its page is the event. Without a date this is context, and the collection time is not the event date."
+    },
+    {
+      "id": "open_ops_role",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\bhiring\\b.{0,60}\\b(?:operations manager|head of operations|ops manager|director of operations)\\b|\\b(?:open|new)\\s+(?:operations|ops)\\s+(?:role|position)\\b",
+      "how": "A quote says an operations role is open. A date on that sentence or its page is the event. Without a date this is context."
+    },
+    {
+      "id": "case_published",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\b(?:published|released|posted)\\b.{0,40}\\bcase stud(?:y|ies)\\b|\\b(?:new|latest)\\s+case stud(?:y|ies)\\b",
+      "how": "A quote says a case study was published. The phrase case studies in a menu is not this signal. A date on the sentence or the page is the event."
+    },
+    {
+      "id": "price_change",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\b(?:updated our pricing|new pricing|price increase|prices? (?:have|has) changed|pricing update)\\b",
+      "how": "A quote says published prices changed. A date on the sentence or the page is the event. Without a date this is context."
+    },
+    {
+      "id": "announcement",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\b(?:excited to announce|pleased to announce|announcing our)\\b",
+      "how": "A quote is an announcement. A date on the sentence or the page is the event. Without a date this is context."
+    },
+    {
+      "id": "expansion",
+      "event_temperature": "warm",
+      "context_temperature": "cold",
+      "pattern": "\\b(?:we are expanding|we're expanding|expanding our|expansion into|opened a new office)\\b",
+      "how": "A quote says the company is expanding or opened an office. A date on the sentence or the page is the event. Without a date this is context."
     }
   ],
   "deal_size": {
@@ -121,6 +163,7 @@
     {"id": "not_us", "method": "already_applied", "how": "Analysis already requires a fresh page that places the company in the US. A non-US fact never reaches the playbook rules."},
     {"id": "advertisement", "method": "already_applied", "how": "A stored advertisement flag is rejected before the playbook rules."},
     {"id": "blocklist", "method": "shared_blocklist", "how": "Job boards, social networks, encyclopedias, dictionaries, question sites, list catalogs, marketplaces, and listed large corporations are dropped before a page is fetched. The host list is data/domain_blocklist.json."},
+    {"id": "competitor", "method": "competitor_offer", "how": "The search title and snippet, or the page title, h1, meta description, and navigation, offer lead generation, outbound, cold email, sales automation, an SDR service, appointment setting, or a sales agency. That company sells the same motion Evorove sells. The patterns are data/competitor_offers.json. A case-study mention in the body is not this surface."},
     {"id": "platform", "method": "platform_domain", "how": "The company domain is a platform host, so it is not the company's own site."},
     {"id": "regulated", "pattern": "\\b(?:law firm|law office|attorney at law|medical practice|our clinic|we are a bank|insurance agency|financial advisory firm)\\b", "how": "The page presents the company as a law, medical, banking, or insurance practice. A software page that only names those buyers can match the same words; that is a conservative miss, not a model judgment."},
     {"id": "local_consumer", "pattern": "\\b(?:dental practice|dental office|hair salon|nail salon|auto repair shop|plumbing company|roofing company)\\b", "how": "The page presents the company as a local service for private individuals."},

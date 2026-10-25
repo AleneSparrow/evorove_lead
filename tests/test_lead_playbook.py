@@ -203,11 +203,11 @@ def test_company_page_urls_stay_on_the_site_and_within_four():
     assert urls == (
         "https://example.com/",
         "https://example.com/careers",
+        "https://example.com/blog/post",
         "https://example.com/pricing",
-        "https://example.com/about",
     )
     assert "https://other.example/jobs" not in urls
-    assert len(company_page_urls("https://example.com/", "")) == 4
+    assert company_page_urls("https://example.com/", "") == ("https://example.com/",)
 
 
 def test_search_drops_blocklist_before_any_fetch_and_keeps_the_root(monkeypatch):
@@ -281,3 +281,82 @@ def test_collector_copies_the_company_page_sentence(monkeypatch):
         assert row.signal_type == "sales_hire" and row.context_only is True
         assert row.quote == "Jane Doe is founder of Example SaaS." and row.quote in row.source_text
         assert row.source_url == "https://example.com/"
+
+
+def test_saved_probe_snippets_separate_competitors_from_agencies():
+    import json
+    from pathlib import Path
+    from evorove_lead.competitor_offers import competitor_offer, offer_surface
+    rows = json.loads((Path(__file__).parent / "fixtures" / "step28_offer_snippets.json").read_text())["rows"]
+    assert len(rows) == 10
+    for row in rows:
+        found = competitor_offer(f"{row['title']} {row['snippet']}")
+        if row["expect"]:
+            assert found == row["expect"], row["domain"]
+        else:
+            assert found == "", row["domain"]
+    menu = "About Us Services ABM Analytics Brand Content " + ("word " * 30) + "Lead generation programs."
+    assert competitor_offer(offer_surface(title="B2B Marketing Agency | Elevation", navigation=menu)) == ""
+    assert competitor_offer(offer_surface(title="B2B Lead Generation Agency")) == "lead_generation"
+
+
+def test_us_confirmation_needs_a_strong_sign_or_two_weak_ones():
+    from evorove_lead.company_facts import assess_us
+    assert assess_us("Our office is in Ohio.")["status"] == "confirmed"
+    assert assess_us("Call +1 (415) 555-0134.")["status"] == "confirmed"
+    assert assess_us("", domain="northwind.us")["status"] == "confirmed"
+    assert assess_us("Hello.", schema_country="US")["status"] == "confirmed"
+    assert assess_us("The company is based in the United States.")["status"] == "confirmed"
+    weak = assess_us("Plans cost $8000 a year. Book a call.")
+    assert weak["status"] == "needs_review" and weak["strong"] == ()
+    assert assess_us("We are serving clients across the US. Plans cost $8000.")["status"] == "confirmed"
+    assert assess_us("Book a call for B2B teams.", domain="northwind.com")["status"] == "absent"
+    assert assess_us("Our office is in Ohio.", schema_country="GB")["status"] == "absent"
+
+
+def test_crawl_order_prefers_a_company_title_over_an_aggregator(monkeypatch):
+    from evorove_lead.source_fallback import UniversalWebFallback
+    from evorove_lead.web_search import SearchHit
+    monkeypatch.setattr("evorove_lead.source_fallback.require_public_http_url", lambda url, host_ok=None: url)
+    class Search:
+        def search(self, query):
+            return (
+                SearchHit("https://lists.example/best", "A roundup of firms.", title="10 Best marketing agency picks"),
+                SearchHit("https://saleshive.com/", "Managed cold calling and email outreach.", title="B2B Sales Agency That Books Qualified Meetings"),
+                SearchHit("https://notes.example/", "A short english note about work.", title="Studio notes from the team"),
+                SearchHit("https://elevationb2b.com/", "Strategy, brand, and creative.", title="B2B Marketing Agency | Elevation"),
+            )
+    found = UniversalWebFallback(None, Search(), ("marketing agency for B2B book a call",), terms=("marketing agency",)).fetch()
+    assert [item.site_url for item in found] == [
+        "https://elevationb2b.com/",
+        "https://notes.example/",
+        "https://lists.example/",
+    ]
+    report = UniversalWebFallback(None, Search(), ("marketing agency for B2B book a call",), terms=("marketing agency",))
+    report.fetch()
+    assert report.dropped["competitor"] == 1
+
+
+def test_page_date_is_kept_and_a_missing_date_stays_context():
+    from evorove_lead.lead_playbooks import find_company_page_signal, find_company_page_signals
+    book = _book()
+    found = find_company_page_signals(book, (
+        ("https://northwind.example/blog", "We launched a new service on March 2, 2026.", "", "en"),
+        ("https://northwind.example/careers", "We are hiring a marketing manager.", "", "en"),
+    ))
+    kinds = {item["signal_type"]: item for item in found}
+    assert kinds["new_offer"]["published"] == "March 2, 2026" and kinds["new_offer"]["context_only"] is False
+    assert kinds["open_marketing_role"]["published"] == "" and kinds["open_marketing_role"]["context_only"] is True
+    long = "We're growing " + ("and hiring more people " * 20) + "."
+    assert find_company_page_signal(book, (("https://northwind.example/careers", long, "", "en"),)) is None
+    assert find_company_page_signal(book, (
+        ("https://northwind.example/blog", "Imagine starting a new job with no guidance.", "", "en"),
+    )) is None
+
+
+def test_needs_review_does_not_become_cold():
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    _store(engine, page="We are hiring an SDR. Book a call. Plans cost $8000 a year.")
+    report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
+    assert touches == () and report["rejections"] == {"needs_review": 1}

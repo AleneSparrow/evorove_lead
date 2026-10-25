@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from evorove_lead.candidate import accept_candidate
 from evorove_lead.crm_touch import assembled_touch, stable_person_id
 from evorove_lead.handoff import Cycle1Handoff
-from evorove_lead.company_facts import confirms_us
+from evorove_lead.company_facts import assess_us
 from evorove_lead.lead_playbooks import screen_lead
 from evorove_lead.source_core_models import SourceCompany, SourcePerson, SourceContact, SourceRawPage, SourceSignal
 
@@ -61,7 +61,7 @@ class SourceAnalyzer:
                 seen.add(signal.domain)
                 if signal.is_advertisement:
                     counts['advertisement']+=1;continue
-                age=now-_utc(signal.signal_date)
+                age=now-_utc(signal.fetched_at if signal.context_only else signal.signal_date)
                 if playbook is None:
                     window = 90 if signal.context_only else 30
                 else:
@@ -80,12 +80,18 @@ class SourceAnalyzer:
                     counts['no_verified_email']+=1;continue
                 person,contact=pair
                 evidence=' '.join([signal.source_text,*[p.text for p in fresh]])
+                if playbook is not None and signal.signal_type == "competitor":
+                    counts['competitor']+=1;continue
                 if playbook is None:
                     us_ok = any(_US.search(p.text) for p in fresh)
+                    if not us_ok:
+                        counts['country_not_confirmed']+=1;continue
                 else:
-                    us_ok = any(confirms_us(p.text) or _US.search(p.text) for p in fresh)
-                if not us_ok:
-                    counts['country_not_confirmed']+=1;continue
+                    verdict = assess_us(evidence, domain=signal.domain)
+                    if verdict["status"] == "needs_review":
+                        counts['needs_review']+=1;continue
+                    if verdict["status"] != "confirmed":
+                        counts['country_not_confirmed']+=1;continue
                 if signal.quote not in signal.source_text:
                     counts['ungrounded_quote']+=1;continue
                 if playbook is None:
@@ -117,7 +123,8 @@ class SourceAnalyzer:
                 candidate=accept_candidate(identity=contact.email,reason=reason,reason_source=signal.source_url)
                 handoff=Cycle1Handoff.from_candidate(candidate,'email',person_id=stable_person_id(business_id,email=contact.email),hypothesis_id=hypothesis)
                 touch=assembled_touch(business_id,candidate,handoff,segment=segment)
-                touch['payload'].update(signal_type=signal.signal_type,signal_date=_utc(signal.signal_date).isoformat(),
+                shown_date = "" if signal.context_only else _utc(signal.signal_date).isoformat()
+                touch['payload'].update(signal_type=signal.signal_type,signal_date=shown_date,
                     source_url=signal.source_url,quote=signal.quote,reason=reason,evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
                     source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind)
                 cold.append(touch);counts['cold_ready']+=1

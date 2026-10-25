@@ -8,6 +8,7 @@ a later classifier sees the article, not the whole document.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from collections import OrderedDict
 from dataclasses import dataclass
@@ -67,6 +68,10 @@ class ExtractedPage:
     author: str | None
     content_type: str
     language: str = ""
+    description: str = ""
+    h1: str = ""
+    navigation: str = ""
+    address_country: str = ""
 
     @property
     def content_sha256(self) -> str:
@@ -95,6 +100,12 @@ def guarded_urlopen(request, timeout=None):  # noqa: ANN001
     return opener.open(request, timeout=timeout)
 
 
+def _navigation(attrs: list[tuple[str, str | None]]) -> bool:
+    blob = " ".join(f"{name or ''} {value or ''}" for name, value in attrs).casefold()
+    tokens = set(re.findall(r"[a-z0-9]+", blob))
+    return bool(tokens & {"nav", "navbar", "navigation", "menu"})
+
+
 def _chrome(attrs: list[tuple[str, str | None]]) -> bool:
     blob = " ".join(f"{name or ''} {value or ''}" for name, value in attrs).casefold()
     tokens = set(re.findall(r"[a-z0-9]+", blob))
@@ -109,15 +120,30 @@ class _MainContentParser(HTMLParser):
         self.publication_date: str | None = None
         self.language = ""
         self.canonical_href: str | None = None
+        self.description = ""
+        self.h1 = ""
+        self.address_country = ""
         self._parts: list[str] = []
+        self._nav_parts: list[str] = []
+        self._ld_chunks: list[str] = []
+        self._scripts: list[str] = []
         self._skip_stack: list[str] = []
+        self._nav_stack: list[str] = []
         self._in_title = False
+        self._in_h1 = False
+        self._capture_ld = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = tag.lower()
         attr = {((name or "").lower()): (value or "") for name, value in attrs}
         if lowered == "html":
             self.language = (attr.get("lang") or "").strip()
+        if lowered == "script" and "ld+json" in attr.get("type", "").casefold():
+            self._capture_ld = True
+        if lowered == "h1":
+            self._in_h1 = True
+        if _navigation(attrs) or lowered == "nav":
+            self._nav_stack.append(lowered)
         if self._skip_stack or lowered in _SKIP_TAGS or _chrome(attrs):
             if lowered not in _VOID_TAGS:
                 self._skip_stack.append(lowered)
@@ -137,6 +163,15 @@ class _MainContentParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         lowered = tag.lower()
+        if lowered == "script":
+            if self._ld_chunks:
+                self._scripts.append("".join(self._ld_chunks))
+                self._ld_chunks = []
+            self._capture_ld = False
+        if lowered == "h1":
+            self._in_h1 = False
+        if self._nav_stack and self._nav_stack[-1] == lowered:
+            self._nav_stack.pop()
         if lowered in _VOID_TAGS:
             return
         if lowered in self._skip_stack:
@@ -149,14 +184,21 @@ class _MainContentParser(HTMLParser):
             self._in_title = False
 
     def handle_data(self, data: str) -> None:
-        if self._skip_stack:
+        if self._capture_ld:
+            self._ld_chunks.append(data)
             return
         chunk = " ".join(data.split())
         if not chunk:
             return
+        if self._nav_stack:
+            self._nav_parts.append(chunk)
+        if self._skip_stack:
+            return
         if self._in_title:
             self.title = " ".join(f"{self.title} {chunk}".split())
             return
+        if self._in_h1 and not self.h1:
+            self.h1 = chunk
         self._parts.append(chunk)
 
     def _meta(self, attr: dict[str, str]) -> None:
@@ -168,10 +210,16 @@ class _MainContentParser(HTMLParser):
             self.author = content
         if name in {"article:published_time", "date", "pubdate", "dc.date"} and self.publication_date is None:
             self.publication_date = content
+        if name in {"description", "og:description"} and not self.description:
+            self.description = content
 
     @property
     def text(self) -> str:
         return " ".join(self._parts)
+
+    @property
+    def navigation(self) -> str:
+        return " ".join(self._nav_parts)
 
 
 def relevant_fragment(text: str, query: str = "", limit: int = 1500) -> str:
@@ -215,7 +263,36 @@ def extract_html(source_url: str, html: str, *, content_type: str = "text/html")
         author=parser.author,
         content_type=content_type,
         language=parser.language,
+        description=parser.description,
+        h1=parser.h1,
+        navigation=parser.navigation,
+        address_country=_address_country(parser._scripts),
     )
+
+
+def _address_country(scripts: list[str]) -> str:
+    found: list[str] = []
+
+    def walk(node) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "addressCountry":
+                    if isinstance(value, str):
+                        found.append(value.strip())
+                    elif isinstance(value, dict):
+                        found.append(str(value.get("name") or value.get("@id") or "").strip())
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    for raw in scripts:
+        try:
+            walk(json.loads(raw))
+        except ValueError:
+            continue
+    return next((item for item in found if item), "")
 
 
 def content_sha256(text: str) -> str:

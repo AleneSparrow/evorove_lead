@@ -1,0 +1,65 @@
+{
+  "note": "Titles and snippets copied from the 2026-10-25 SearxNG probe. No page was fetched for these rows.",
+  "rows": [
+    {
+      "domain": "saleshive.com",
+      "expect": "cold_outreach",
+      "title": "SalesHive: B2B Sales Agency That Books Qualified Meetings",
+      "snippet": "SalesHive is a project-centered AI platform for sales, marketing and operations, with expert help to set it up and managed cold calling and email outreach run ..."
+    },
+    {
+      "domain": "a-sales.co",
+      "expect": "lead_generation",
+      "title": "A-Sales | B2B Lead Generation Agency",
+      "snippet": "Cold calling–led B2B lead generation with pay-per-appointment options. A-Sales books qualified sales meetings for B2B teams in healthcare, finance, ..."
+    },
+    {
+      "domain": "callingagency.com",
+      "expect": "cold_outreach",
+      "title": "Cold Calling Services | B2B Cold Calling Agency",
+      "snippet": "Our cold calling services connect with decision-makers and deliver 10–25 qualified sales appointments per month. Get started with expert B2B cold callers."
+    },
+    {
+      "domain": "outboundsalespro.com",
+      "expect": "lead_generation",
+      "title": "Marketing Agency Lead Generation - OSP - Outbound Sales Pro",
+      "snippet": "B2B Marketing Agency Lead Generation. Fill your sales pipeline with 3-5x ... Web ID · Book an Intro Call."
+    },
+    {
+      "domain": "punchb2b.com",
+      "expect": "outbound",
+      "title": "The Smart B2B Sales Agency - Punch!",
+      "snippet": "Full-funnel outbound agency helping mid-market and enterprise businesses grow pipeline and close deals faster. Book strategy call."
+    },
+    {
+      "domain": "callboxinc.com",
+      "expect": "lead_generation",
+      "title": "B2B Lead Generation Services and Appointment Setting Agency",
+      "snippet": "Callbox is a B2B lead generation agency and appointment setting company that books sales meetings with real decision-makers across B2B industries."
+    },
+    {
+      "domain": "leadsatscale.com",
+      "expect": "lead_generation",
+      "title": "Leads at Scale: B2B Lead Generation & Appointment Setting Services",
+      "snippet": "US-based BDRs handle prospecting, cold calling and follow-up, then book qualified B2B appointments so your sales team can focus on closing."
+    },
+    {
+      "domain": "elevationb2b.com",
+      "expect": "",
+      "title": "B2B Marketing Agency | Elevation",
+      "snippet": "As a full-service B2B marketing agency, we bring strategy, brand, creative and media together to help companies grow with confidence and consistency."
+    },
+    {
+      "domain": "davidcraigwhite.com",
+      "expect": "",
+      "title": "B2B Sales Consulting for Fast-Growing Companies",
+      "snippet": "Oct 1, 2026 ... Sales process consulting can include qualification, discovery, sales stages, opportunity management ... Book a Free Consultation Call. Complete ..."
+    },
+    {
+      "domain": "creativeanalyticsdc.com",
+      "expect": "",
+      "title": "Chicago Digital Marketing Agency - Creative Analytics",
+      "snippet": "Connect with one of our B2B marketing experts about your growth strategy or project needs. Book a Call · WASHINGTON DC | ROCKVILLE | AUSTIN | SAN ANTONIO ..."
+    }
+  ]
+}

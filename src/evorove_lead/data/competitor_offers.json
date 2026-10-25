@@ -1,0 +1,13 @@
+{
+  "version": "2026-10-25",
+  "note": "The main offer, not a mention in a case study. Checked on the search title and snippet, and on the page title, h1, meta description, and navigation.",
+  "patterns": [
+    {"id": "lead_generation", "pattern": "\\b(?:lead generation|lead gen|b2b leads)\\b"},
+    {"id": "outbound", "pattern": "\\boutbound\\s+(?:sales|agency|prospecting|marketing)\\b"},
+    {"id": "cold_outreach", "pattern": "\\b(?:cold email|cold calling|cold calls?)\\b"},
+    {"id": "sales_automation", "pattern": "\\bsales automation\\b"},
+    {"id": "sdr_service", "pattern": "\\b(?:sdr[ -]as[ -]a[ -]service|ai sdr|fractional sdr)\\b"},
+    {"id": "appointment_setting", "pattern": "\\b(?:appointment setting|books? qualified (?:sales )?meetings|qualified (?:sales|b2b) appointments)\\b"},
+    {"id": "sales_agency", "pattern": "\\bsales agency\\b"}
+  ]
+}

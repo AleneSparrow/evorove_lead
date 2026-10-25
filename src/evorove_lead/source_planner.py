@@ -280,7 +280,8 @@ def adapters_for_plan(plan: SourcePlan, http, search=None):
         elif spec.id == "sec_form_d":
             adapters.append(SecFormDAdapter(http))
         elif spec.id == "searxng_web":
-            adapters.append(UniversalWebFallback(http, search, item.queries))
+            terms = tuple(item.filters.get("company_terms") or ())
+            adapters.append(UniversalWebFallback(http, search, item.queries, terms=terms))
     return tuple(adapters)
 
 

@@ -258,6 +258,7 @@ def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=Fals
         summary['collected'] = collector.collect(business_id, adapters)
         summary['http_requests'] = http.count
         summary['search_filter'] = next((adapter.filter_report() for adapter in adapters if hasattr(adapter, 'filter_report')), {})
+        summary['page_rejections'] = dict(collector.page_drops)
     if not collect_only:
         classifier = None
         if playbook is None and os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':

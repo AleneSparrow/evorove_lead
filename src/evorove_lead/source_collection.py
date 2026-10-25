@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 from urllib.parse import urljoin, urlsplit
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
+from evorove_lead.company_facts import parse_page_date
+from evorove_lead.competitor_offers import competitor_offer, offer_surface
 from evorove_lead.decision_maker import heuristic_decision_maker
 from evorove_lead.page_extract import extract_html, content_sha256
 from evorove_lead.platforms import registrable_domain, is_platform
@@ -16,11 +18,11 @@ from evorove_lead.source_core_models import SourceCompany, SourcePerson, SourceC
 _EMAIL = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
 _GENERIC = {'info','admin','support','hello','contact','sales','office','team','noreply'}
 _HREF = re.compile(r"""href=["']([^"'#]+)["']""", re.I)
-_PAGE_PATHS = ("careers", "jobs", "pricing", "about", "team", "contact", "case-studies", "cases", "clients", "work")
+_PAGE_PATHS = ("careers", "jobs", "blog", "news", "case-studies", "cases", "pricing", "about", "team", "contact", "clients", "work")
 _PAGE_LIMIT = 4
 
 def company_page_urls(root: str, homepage_html: str, *, limit: int = _PAGE_LIMIT) -> tuple[str, ...]:
-    """Root plus up to three same-site signal pages. Never more than `limit` fetches."""
+    """Root plus up to three same-site pages the homepage actually links. Never more than `limit` fetches."""
     root = root if root.endswith("/") else root + "/"
     found = []
     for match in _HREF.finditer(homepage_html or ""):
@@ -36,14 +38,7 @@ def company_page_urls(root: str, homepage_html: str, *, limit: int = _PAGE_LIMIT
             continue
         found.append(cleaned)
     found.sort(key=lambda url: next((i for i, name in enumerate(_PAGE_PATHS) if re.search(rf"(?:^|/){re.escape(name)}(?:/|$)", urlsplit(url).path.casefold())), len(_PAGE_PATHS)))
-    defaults = [urljoin(root, name) for name in ("about", "pricing", "careers")]
-    ordered = []
-    for url in (*found, *defaults):
-        if url not in ordered and url.rstrip("/") != root.rstrip("/"):
-            ordered.append(url)
-        if len(ordered) >= limit - 1:
-            break
-    return (root, *ordered)
+    return (root, *found[:limit - 1])
 
 def public_mx_exists(domain: str) -> bool:
     """DNS check during collection; fail closed on timeout/NXDOMAIN/null MX."""
@@ -54,15 +49,11 @@ def public_mx_exists(domain: str) -> bool:
     except Exception:
         return False
 
-def _parse_when(value: str):
-    text = (value or "").strip()
-    if not text:
-        return None
-    try:
-        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=timezone.utc)
+def _with_country(text: str, country: str) -> str:
+    country = (country or "").strip()
+    if not country:
+        return text
+    return f"{text} addressCountry {country}."
 
 
 def _utc(value):
@@ -73,6 +64,7 @@ class SourceCollector:
         self.engine, self.http, self.mx_check, self.clock = engine, http, mx_check, clock
         self.ttl = timedelta(days=ttl_days)
         self.page_signals = page_signals
+        self.page_drops: Counter = Counter()
 
     def collect(self, business_id: str, adapters: tuple[SourceAdapter, ...]) -> dict:
         stats = Counter()
@@ -125,6 +117,7 @@ class SourceCollector:
         pages = []
         dated = []
         homepage = ""
+        offer = ""
         try:
             homepage = self.http.get(root)
             final = getattr(self.http, "final_url", "") or root
@@ -132,9 +125,10 @@ class SourceCollector:
             if final_host and registrable_domain(final_host) == domain:
                 root = f"{urlsplit(final).scheme}://{final_host}/"
             page = extract_html(root, homepage)
+            offer = offer_surface(title=page.title, h1=page.h1, description=page.description, navigation=page.navigation)
             if page.text.strip():
-                pages.append((root, page.text))
-                dated.append((root, page.text, page.publication_date or "", page.language if hasattr(page, "language") else ""))
+                pages.append((root, _with_country(page.text, page.address_country)))
+                dated.append((root, pages[-1][1], page.publication_date or "", page.language))
         except Exception:
             homepage = ""
         for url in company_page_urls(root, homepage)[1:]:
@@ -142,11 +136,15 @@ class SourceCollector:
                 raw = self.http.get(url)
                 page = extract_html(url, raw)
                 if page.text.strip():
-                    pages.append((url, page.text))
-                    dated.append((url, page.text, page.publication_date or "", getattr(page, "language", "")))
+                    pages.append((url, _with_country(page.text, page.address_country)))
+                    dated.append((url, pages[-1][1], page.publication_date or "", page.language))
             except Exception:
                 continue
-        self._apply_page_signal(business_id, domain, dated, now)
+        if competitor_offer(offer):
+            self.page_drops["competitor"] += 1
+            self._mark_competitor(business_id, domain, offer, now)
+        else:
+            self._apply_page_signal(business_id, domain, dated, now)
         with Session(self.engine) as db, db.begin():
             company = db.get(SourceCompany, (business_id,domain))
             if company is None or company.suppressed:
@@ -175,16 +173,18 @@ class SourceCollector:
         found = self.page_signals(dated)
         if not found or found.get("quote") not in (found.get("source_text") or ""):
             return
-        published = _parse_when(found.get("published") or "")
-        when = published or now
+        published = parse_page_date(found.get("published") or "")
         new_url = found["source_url"]
         with Session(self.engine) as db, db.begin():
             rows = list(db.scalars(select(SourceSignal).where(SourceSignal.business_id==business_id, SourceSignal.domain==domain)))
             target = next((row for row in rows if row.source_id == "searxng_web" or row.signal_type == "company_candidate"), None)
             if target is None:
                 return
-            fields = dict(signal_type=found["signal_type"], signal_date=when, quote=found["quote"],
+            # A missing page date stays missing. fetched_at is the observation, not the event.
+            fields = dict(signal_type=found["signal_type"], quote=found["quote"],
                 source_text=found["source_text"], context_only=published is None, fetched_at=now)
+            if published is not None:
+                fields["signal_date"] = published
             if target.source_url == new_url:
                 for key, value in fields.items():
                     setattr(target, key, value)
@@ -194,6 +194,21 @@ class SourceCollector:
             db.flush()
             db.add(SourceSignal(business_id=business_id, source_url=new_url, domain=domain, source=source,
                 is_advertisement=advertisement, source_id=source_id, **fields))
+
+    def _mark_competitor(self, business_id: str, domain: str, offer: str, now) -> None:
+        quote = " ".join((offer or "").split())[:700]
+        if not quote:
+            return
+        with Session(self.engine) as db, db.begin():
+            rows = list(db.scalars(select(SourceSignal).where(SourceSignal.business_id==business_id, SourceSignal.domain==domain)))
+            target = next((row for row in rows if row.source_id == "searxng_web" or row.signal_type == "company_candidate"), None)
+            if target is None:
+                return
+            target.signal_type = "competitor"
+            target.quote = quote
+            target.source_text = quote
+            target.context_only = True
+            target.fetched_at = now
 
     def suppress_and_erase(self, business_id: str, domain: str) -> None:
         """Erase collected content/PII and retain a domain stop-list tombstone."""

@@ -124,7 +124,8 @@ def plan_from_playbook(analysis, playbook: LeadPlaybook) -> SourcePlan:
         selected.append(PlannedSource(
             spec.id, item["note"], queries,
             {"geography": "United States", "playbook": playbook.id, "playbook_version": playbook.version,
-             "minimum_usd_per_year": playbook.minimum_usd_per_year}))
+             "minimum_usd_per_year": playbook.minimum_usd_per_year,
+             "company_terms": [term for sub in playbook.subsegments for term in sub["terms"]]}))
         selected_ids.add(spec.id)
     if not selected:
         raise RuntimeError("playbook selected no enabled source")
@@ -196,6 +197,8 @@ def _exclusion(playbook: LeadPlaybook, rule: dict, evidence: str, domain: str) -
         return ""
     if method == "shared_blocklist":
         return block_reason(domain)
+    if method == "competitor_offer":
+        return ""
     if method == "platform_domain":
         return rule["id"] if domain and is_platform(domain) else ""
     if method == "domain_list":
@@ -227,40 +230,56 @@ def _signal_sentence(quote: str, pattern: str) -> str:
     compiled = re.compile(pattern, re.I)
     for part in re.findall(r"[^.!?]+[.!?]", quote or ""):
         sentence = part.strip()
-        if sentence and compiled.search(sentence) and sentence in quote:
+        if sentence and len(sentence) <= 280 and compiled.search(sentence) and sentence in quote:
             return sentence
     return ""
 
 
-_PAGE_RANK = ("careers", "jobs", "pricing", "about", "team", "contact", "case-studies", "cases", "clients", "work")
+_PAGE_RANK = ("careers", "jobs", "blog", "news", "case-studies", "cases", "pricing", "about", "team", "contact", "clients", "work")
+_SALES_FIRST = {"sales_hire": 0, "open_sales_role": 1}
 
 
-def find_company_page_signal(playbook: LeadPlaybook, pages) -> dict | None:
-    """A signal sentence copied from the company's own page.
+def find_company_page_signals(playbook: LeadPlaybook, pages) -> tuple[dict, ...]:
+    """Every signal sentence on the company's own pages.
 
-    Without a publication date the result is context, not an event, so it
-    cannot be hot. The search snippet is not a substitute for this sentence.
+    A date is taken from the page's publication markup or from a date written
+    in the sentence. The collection clock is not a date. Without either, the
+    signal is context and cannot be hot.
     """
-    ranked = sorted(pages, key=lambda item: _page_rank(item[0]))
-    for item in ranked:
+    from evorove_lead.company_facts import date_in_sentence, parse_page_date
+    found = []
+    for item in pages:
         url, text = item[0], item[1]
         published = item[2] if len(item) > 2 else ""
         language = item[3] if len(item) > 3 else ""
         if not looks_english(text or "", language=language or ""):
             continue
-        for signal in playbook.signals:
+        for index, signal in enumerate(playbook.signals):
             sentence = _signal_sentence(text, signal["pattern"])
             if not sentence:
                 continue
-            return {
+            explicit = (published or "").strip() or date_in_sentence(sentence)
+            if explicit and parse_page_date(explicit) is None:
+                explicit = ""
+            found.append({
                 "quote": sentence,
                 "source_url": url,
                 "source_text": text,
                 "signal_type": signal["id"],
-                "published": published or "",
-                "context_only": not str(published or "").strip(),
-            }
-    return None
+                "published": explicit,
+                "context_only": not explicit,
+                "_rank": (0 if explicit else 1, _SALES_FIRST.get(signal["id"], 5), _page_rank(url), index),
+            })
+    found.sort(key=lambda item: item["_rank"])
+    for item in found:
+        item.pop("_rank", None)
+    return tuple(found)
+
+
+def find_company_page_signal(playbook: LeadPlaybook, pages) -> dict | None:
+    """The signal kept for one company: a dated sales sentence beats the rest."""
+    found = find_company_page_signals(playbook, pages)
+    return found[0] if found else None
 
 
 def _page_rank(url: str) -> int:
@@ -332,7 +351,7 @@ def _load(path: Path) -> LeadPlaybook:
             if not rule.get("domains"):
                 raise RuntimeError(f"{path.name} domain list")
             continue
-        if method in {"platform_domain", "low_ticket", "shared_blocklist"}:
+        if method in {"platform_domain", "low_ticket", "shared_blocklist", "competitor_offer"}:
             continue
         if method not in {None, ""} or not rule.get("pattern"):
             raise RuntimeError(f"{path.name} exclusion")
