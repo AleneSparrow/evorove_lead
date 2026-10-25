@@ -16,6 +16,9 @@ PLATFORM_DOMAINS = frozenset(
     nextdoor.com craigslist.org quora.com yelp.com medium.com wordpress.com blogspot.com
     yellowpages.com bbb.org angi.com angieslist.com thumbtack.com homeadvisor.com houzz.com
     google.com stackexchange.com stackoverflow.com patch.com city-data.com tripadvisor.com
+    github.com github.io gitlab.com bitbucket.org huggingface.co codeberg.org sourceforge.net
+    npmjs.com pypi.org readthedocs.io news.ycombinator.com producthunt.com ycombinator.com
+    indiehackers.com dev.to
     """.split()
 )
 PLATFORM_LABELS = ("forum", "forums", "community", "discuss", "board", "boards", "groups")

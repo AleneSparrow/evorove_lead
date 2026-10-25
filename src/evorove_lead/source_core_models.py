@@ -58,4 +58,14 @@ class SourceSignal(Base):
     fetched_at = Column(DateTime(timezone=True), nullable=False)
     context_only = Column(Boolean, nullable=False, default=False)
     is_advertisement = Column(Boolean, nullable=False, default=False)
+    source_id = Column(String(64), nullable=False, default='', server_default='')
     __table_args__ = (ForeignKeyConstraint(['business_id','domain'], ['companies.business_id','companies.domain']),)
+
+class SourcePlanRow(Base):
+    """One cached model source plan, keyed by the client-analysis hash."""
+    __tablename__ = 'source_plans'
+    business_id = Column(String(128), primary_key=True)
+    brief_hash = Column(String(64), primary_key=True)
+    plan_json = Column(Text, nullable=False)
+    model = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False)

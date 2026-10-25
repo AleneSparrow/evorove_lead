@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from evorove_lead.sqlalchemy_models import Base
-from evorove_lead import intelligence_store, research_budget, research_cache, llm_usage, research_delivery  # register metadata
+from evorove_lead import intelligence_store, research_budget, research_cache, llm_usage, research_delivery, source_core_models  # register metadata
 from evorove_lead.sqlalchemy_warehouse import database_url_from_environment
 
 config = context.config

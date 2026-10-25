@@ -64,6 +64,7 @@ class SearchHit:
 
     url: str
     snippet: str
+    published: str = ""
 
 
 class WebSearchClient(Protocol):
@@ -91,7 +92,9 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
         if not isinstance(item, dict) or not isinstance(item.get("url"), str) or not item["url"].strip() or not isinstance(item.get("content", ""), str):
             raise SearchError("search_invalid_structure")
         if len(hits) < MAX_RESULTS_PER_QUERY:
-            hits.append(SearchHit(url=item["url"].strip(), snippet=item.get("content", "").strip()))
+            published = item.get("publishedDate") or item.get("published") or ""
+            hits.append(SearchHit(url=item["url"].strip(), snippet=item.get("content", "").strip(),
+                published=published.strip() if isinstance(published, str) else ""))
     failures = payload.get("unresponsive_engines", [])
     if not isinstance(failures, list):
         raise SearchError("search_invalid_structure")

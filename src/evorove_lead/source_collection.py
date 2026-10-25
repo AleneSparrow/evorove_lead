@@ -66,7 +66,8 @@ class SourceCollector:
             if existing is None:
                 db.add(SourceSignal(business_id=business_id,source_url=signal.source_url,domain=domain,source=signal.source,
                     signal_type=signal.signal_type,signal_date=signal.signal_date,quote=signal.quote,source_text=signal.source_text,
-                    fetched_at=now,context_only=signal.context_only,is_advertisement=signal.is_advertisement))
+                    fetched_at=now,context_only=signal.context_only,is_advertisement=signal.is_advertisement,
+                    source_id=signal.source_id or signal.source))
             fresh = company.expires_at is not None and _utc(company.expires_at) > now
             if not fresh:
                 # Claim the site before any HTTP request, so concurrent runs reuse it.

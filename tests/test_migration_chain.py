@@ -22,6 +22,7 @@ EXPECTED = (
     ("0010", "0011"),
     ("0011", "0012"),
     ("0012", "0013"),
+    ("0013", "0014"),
 )
 
 
@@ -41,4 +42,4 @@ def test_revisions_are_a_single_line_without_duplicate_ids():
         revision = down
     pairs.reverse()
     assert pairs == list(EXPECTED)
-    assert script.get_current_head() == "0013"
+    assert script.get_current_head() == "0014"

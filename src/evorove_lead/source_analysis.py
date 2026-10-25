@@ -100,7 +100,8 @@ class SourceAnalyzer:
             handoff=Cycle1Handoff.from_candidate(candidate,'email',person_id=stable_person_id(business_id,email=contact.email),hypothesis_id='source-core')
             touch=assembled_touch(business_id,candidate,handoff,segment='small US SaaS or online business')
             touch['payload'].update(signal_type=signal.signal_type,signal_date=_utc(signal.signal_date).isoformat(),
-                source_url=signal.source_url,quote=signal.quote,reason=reason,evidence_fetched_at=_utc(signal.fetched_at).isoformat())
+                source_url=signal.source_url,quote=signal.quote,reason=reason,evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
+                source_id=signal.source_id or signal.source)
             cold.append(touch);counts['cold_ready']+=1
         report={'signals':len(signals),'rejections':{k:v for k,v in counts.items() if k not in {'rules_passed','model_analyzed','cold_ready'}},
             'rules_passed':counts['rules_passed'],'model_analyzed':counts['model_analyzed'],'cold_ready':counts['cold_ready'],

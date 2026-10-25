@@ -183,22 +183,60 @@ def preflight(*, probe_search=False):
     return report
 
 
-def run_source_dry_run(*, collect_only=False, analyze_only=False) -> dict:
-    """Separate collect-once mode. Explicit source DB, no CRM sink or old research."""
+def client_zero_source_analysis(business_id: str):
+    """Brief already on disk. The stale local-service hypotheses are not this ICP."""
+    from evorove_lead.source_planner import client_zero_analysis
+    path = OWNER_MATERIALS_DIR / "service.txt"
+    brief = path.read_text(encoding="utf-8") if path.is_file() else ""
+    if "small SaaS and online businesses" not in brief:
+        raise RuntimeError("client 0 brief is missing the confirmed ICP")
+    return client_zero_analysis(business_id, brief)
+
+
+def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=False) -> dict:
+    """Separate collect-once mode. Explicit source DB, no CRM sink or old research.
+
+    Collection follows the cached model plan for this brief hash, or the
+    deterministic catalog plan when that cache is empty. It does not call the model.
+    """
     from sqlalchemy import create_engine
-    from evorove_lead.source_adapters import PublicSourceHTTP, HNAlgoliaAdapter
+    from evorove_lead.source_adapters import PublicSourceHTTP
     from evorove_lead.source_collection import SourceCollector
     from evorove_lead.source_analysis import SourceAnalyzer
+    from evorove_lead.source_planner import adapters_for_plan, deterministic_source_plan, load_cached_plan, plan_with_model
     db_url = os.getenv('SOURCE_DATABASE_URL')
     if not db_url:
         raise RuntimeError('SOURCE_DATABASE_URL is required for source mode')
     business_id = os.getenv('EVOROVE_CLIENT_ZERO_BUSINESS_ID') or 'client-zero'
     engine = create_engine(db_url, future=True)
+    analysis = client_zero_source_analysis(business_id)
     summary = {'mode':'source_dry_run','business_id':business_id,'crm_writes':0,'cold':0,'messages_sent':0}
+    if plan_only:
+        if os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':
+            model = os.getenv('ANTHROPIC_MODEL')
+            if model != 'claude-sonnet-5-5':
+                raise RuntimeError('source mode requires explicitly priced claude-sonnet-5-5')
+            key = os.getenv('ANTHROPIC_API_KEY')
+            if not key:
+                raise RuntimeError('ANTHROPIC_API_KEY is required for paid analysis')
+            from evorove_lead.research_config import AnthropicResearchCompletion
+            plan = plan_with_model(engine, analysis, AnthropicResearchCompletion(key, model, effort='medium'))
+        else:
+            plan = deterministic_source_plan(analysis)
+        summary['plan'] = plan.as_dict()
+        engine.dispose()
+        return summary
     if not analyze_only:
+        plan = load_cached_plan(engine, business_id, analysis.brief_hash()) or deterministic_source_plan(analysis)
+        summary['plan'] = {'model_used': plan.model_used, 'brief_hash': plan.brief_hash,
+            'selected': [item.source_id for item in plan.selected]}
         http = PublicSourceHTTP(max_requests=int(os.getenv('SOURCE_MAX_REQUESTS','40')))
-        collector = SourceCollector(engine,http,ttl_days=int(os.getenv('SOURCE_SITE_TTL_DAYS','7')))
-        summary['collected'] = collector.collect(business_id,(HNAlgoliaAdapter(http,feed="show"),HNAlgoliaAdapter(http,feed="ask"),HNAlgoliaAdapter(http,feed="hiring")))
+        search = None
+        if any(item.source_id == 'searxng_web' for item in plan.selected):
+            from evorove_lead.web_search import client_from_env
+            search = client_from_env()
+        collector = SourceCollector(engine, http, ttl_days=int(os.getenv('SOURCE_SITE_TTL_DAYS','7')))
+        summary['collected'] = collector.collect(business_id, adapters_for_plan(plan, http, search))
         summary['http_requests'] = http.count
     if not collect_only:
         classifier = None
@@ -226,13 +264,16 @@ def main() -> None:
     parser.add_argument("--source-dry-run", action="store_true")
     parser.add_argument("--collect-only", action="store_true")
     parser.add_argument("--analyze-only", action="store_true")
+    parser.add_argument("--plan-sources", action="store_true")
     args = parser.parse_args()
     if args.collect_only and args.analyze_only:
         parser.error("choose only one of --collect-only and --analyze-only")
-    if (args.collect_only or args.analyze_only) and not args.source_dry_run:
-        parser.error("--collect-only and --analyze-only require --source-dry-run")
+    if args.plan_sources and (args.collect_only or args.analyze_only):
+        parser.error("--plan-sources does not collect or analyze")
+    if (args.collect_only or args.analyze_only or args.plan_sources) and not args.source_dry_run:
+        parser.error("--collect-only, --analyze-only, and --plan-sources require --source-dry-run")
     if args.source_dry_run:
-        print(json.dumps(run_source_dry_run(collect_only=args.collect_only, analyze_only=args.analyze_only), indent=2))
+        print(json.dumps(run_source_dry_run(collect_only=args.collect_only, analyze_only=args.analyze_only, plan_only=args.plan_sources), indent=2))
         return
     if args.preflight:
         report = preflight(probe_search=args.probe_search)

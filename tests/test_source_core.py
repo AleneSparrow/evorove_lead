@@ -21,16 +21,40 @@ def test_saved_hn_samples_have_dated_grounded_quotes():
     show = HNAlgoliaAdapter.parse((FIX/'hn_show.json').read_text(), 'show')
     ask = HNAlgoliaAdapter.parse((FIX/'hn_ask.json').read_text(), 'ask')
     hiring = HNAlgoliaAdapter.parse((FIX/'hn_hiring.json').read_text(), 'hiring')
-    assert len(show)==2 and all(s.signal_date.tzinfo and s.quote in s.source_text for s in show)
+    assert len(show)==2 and all(s.signal_date.tzinfo and s.quote in s.source_text and s.source_id=='hn_show' for s in show)
     assert all(s.signal_type=='ask_hn_need' and s.quote in s.source_text for s in ask)
-    assert all(s.signal_type=='hn_hiring' and s.quote in s.source_text for s in hiring)
+    # The saved sample is a search for the word "hiring", not the monthly thread, so it yields nothing.
+    assert hiring == ()
     assert HNAlgoliaAdapter.parse('{"hits": [{"title":"Ask HN: no company link","created_at":"2026-10-25T00:00:00Z","objectID":"1"}]}','ask')==()
     comment = {'hits':[{'objectID':'44','created_at':'2026-10-25T00:00:00Z',
         'story_title':'Ask HN: Who is hiring? (October 2026)',
         'comment_text':'We are hiring a first SDR at https://example.com/jobs', 'author':'handle'}]}
     parsed = HNAlgoliaAdapter.parse(json.dumps(comment),'hiring')
     assert len(parsed)==1 and parsed[0].company_name=='example.com'
-    assert parsed[0].person_name=='' and parsed[0].quote in parsed[0].source_text
+    assert parsed[0].person_name=='' and parsed[0].quote in parsed[0].source_text and parsed[0].source_id=='hn_hiring'
+    github = {'hits':[{'objectID':'45','created_at':'2026-10-25T00:00:00Z','story_title':'Ask HN: Who is hiring? (October 2026)',
+        'comment_text':'Library at https://github.com/acme/app and https://huggingface.co/acme/model','author':'handle'}]}
+    assert HNAlgoliaAdapter.parse(json.dumps(github),'hiring')==()
+
+
+def test_who_is_hiring_fetches_the_monthly_thread():
+    class HTTP:
+        def __init__(self):
+            self.urls=[]
+        def get(self, url, **kwargs):
+            self.urls.append(url)
+            if 'ask_hn' in url:
+                return json.dumps({'hits':[{'objectID':'999','title':'Ask HN: Who is hiring? (October 2026)','created_at':'2026-10-01T00:00:00Z'}]})
+            return json.dumps({'hits':[{'objectID':'1','created_at':'2026-10-20T00:00:00Z',
+                'story_title':'Ask HN: Who is hiring? (October 2026)','comment_text':'Acme is hiring at https://example.com/jobs','author':'handle'}]})
+    http = HTTP()
+    signals = HNAlgoliaAdapter(http, feed='hiring').fetch()
+    assert len(http.urls)==2 and 'story_999' in http.urls[1] and 'query=hiring' not in http.urls[1]
+    assert len(signals)==1 and signals[0].source_id=='hn_hiring' and signals[0].person_name==''
+    empty = HTTP()
+    empty.get = lambda url, **kwargs: (empty.urls.append(url) or '{"hits":[{"objectID":"1","title":"Ask HN: something else","created_at":"2026-10-01T00:00:00Z"}]}')
+    assert HNAlgoliaAdapter(empty, feed='hiring').fetch()==()
+    assert len(empty.urls)==1
 
 
 class FakeResponse:
@@ -64,19 +88,21 @@ def test_robots_block_and_one_second_site_spacing():
 def make_signal(days=1):
     quote='We need customers for our SaaS in the United States.'
     return RawSignal('Example','', 'https://example.com','ask_hn_need',NOW-timedelta(days=days),
-        'https://news.ycombinator.com/item?id=123',quote,'hn_algolia',quote)
+        'https://news.ycombinator.com/item?id=123',quote,'hn_ask',quote,source_id='hn_ask')
 
-def setup():
+def setup(monkeypatch):
     engine=create_engine('sqlite://')
     Base.metadata.create_all(engine)
     fake=FakeHTTP()
     tick=[0.0]
     http=PublicSourceHTTP(opener=fake,clock=lambda:tick[0],sleep=lambda n:tick.__setitem__(0,tick[0]+n),host_ok=lambda _:True)
+    # The collector checks the URL is public. These tests use example hosts and do not resolve DNS.
+    monkeypatch.setattr('evorove_lead.source_collection.require_public_http_url', lambda url, host_ok=None: url)
     collector=SourceCollector(engine,http,mx_check=lambda _:True,clock=lambda:NOW)
     return engine,collector,fake
 
 def test_collect_once_contact_mx_and_offline_analysis(monkeypatch):
-    engine,collector,fake=setup()
+    engine,collector,fake=setup(monkeypatch)
     assert collector.add('client-zero',make_signal())=='collected'
     site_requests=len(fake.urls)
     assert site_requests<=5  # robots plus at most four site pages
@@ -86,6 +112,7 @@ def test_collect_once_contact_mx_and_offline_analysis(monkeypatch):
         pages=db.scalars(select(SourceRawPage)).all()
         assert len(pages)<=4 and all(len(p.sha256)==64 and p.expires_at.date()>=NOW.date() for p in pages)
         assert db.scalar(select(SourceContact)).mx_verified
+        assert db.scalar(select(SourceSignal)).source_id=='hn_ask'
     class Classifier:
         calls=0
         def complete_bounded(self,*,system,user,max_tokens,effort):
@@ -105,8 +132,8 @@ def test_collect_once_contact_mx_and_offline_analysis(monkeypatch):
     assert touches[0]['cycle']==1 and touches[0]['kind']=='assembled'
 
 
-def test_fail_closed_no_mx_stale_signal_suppression_and_bad_model_reason():
-    engine,collector,fake=setup()
+def test_fail_closed_no_mx_stale_signal_suppression_and_bad_model_reason(monkeypatch):
+    engine,collector,fake=setup(monkeypatch)
     collector.mx_check=lambda _:False
     collector.add('client-zero',make_signal())
     class Model:
@@ -137,9 +164,9 @@ def test_fail_closed_no_mx_stale_signal_suppression_and_bad_model_reason():
         assert not db.scalars(select(SourceContact)).all()
         assert not db.scalars(select(SourceSignal)).all()
 
-def test_same_email_across_companies_is_one_person():
+def test_same_email_across_companies_is_one_person(monkeypatch):
     from evorove_lead.source_core_models import SourcePerson
-    engine,collector,_=setup()
+    engine,collector,_=setup(monkeypatch)
     collector.add('client-zero',make_signal())
     with Session(engine) as db,db.begin():
         db.add(SourceCompany(business_id='client-zero',domain='example.org',name='Second',site_url='https://example.org',collected_at=NOW,expires_at=NOW+timedelta(days=7)))
