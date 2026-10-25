@@ -73,7 +73,7 @@ def test_postgres_migration_roundtrip(pg, monkeypatch):
     try:
         command.upgrade(config, "head")
         with pg.connect() as connection:
-            assert connection.execute(text("select version_num from alembic_version")).scalar() == "0012"
+            assert connection.execute(text("select version_num from alembic_version")).scalar() == "0013"
         names = set(inspect(pg).get_table_names())
         assert {"lead_qualifications", "lead_feedback", "llm_usage"} <= names
         assert {"research_documents", "research_budget_days", "research_run_leases"} <= names

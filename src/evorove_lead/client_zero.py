@@ -183,6 +183,39 @@ def preflight(*, probe_search=False):
     return report
 
 
+def run_source_dry_run(*, collect_only=False, analyze_only=False) -> dict:
+    """Separate collect-once mode. Explicit source DB, no CRM sink or old research."""
+    from sqlalchemy import create_engine
+    from evorove_lead.source_adapters import PublicSourceHTTP, HNAlgoliaAdapter
+    from evorove_lead.source_collection import SourceCollector
+    from evorove_lead.source_analysis import SourceAnalyzer
+    db_url = os.getenv('SOURCE_DATABASE_URL')
+    if not db_url:
+        raise RuntimeError('SOURCE_DATABASE_URL is required for source mode')
+    business_id = os.getenv('EVOROVE_CLIENT_ZERO_BUSINESS_ID') or 'client-zero'
+    engine = create_engine(db_url, future=True)
+    summary = {'mode':'source_dry_run','business_id':business_id,'crm_writes':0,'cold':0,'messages_sent':0}
+    if not analyze_only:
+        http = PublicSourceHTTP(max_requests=int(os.getenv('SOURCE_MAX_REQUESTS','40')))
+        collector = SourceCollector(engine,http,ttl_days=int(os.getenv('SOURCE_SITE_TTL_DAYS','7')))
+        summary['collected'] = collector.collect(business_id,(HNAlgoliaAdapter(http,feed="show"),HNAlgoliaAdapter(http,feed="ask"),HNAlgoliaAdapter(http,feed="hiring")))
+        summary['http_requests'] = http.count
+    if not collect_only:
+        classifier = None
+        if os.getenv('SOURCE_ALLOW_PAID_LLM') == '1':
+            model = os.getenv('ANTHROPIC_MODEL')
+            if model != 'claude-sonnet-5-5':
+                raise RuntimeError('source mode requires explicitly priced claude-sonnet-5-5')
+            key = os.getenv('ANTHROPIC_API_KEY')
+            if not key:
+                raise RuntimeError('ANTHROPIC_API_KEY is required for paid analysis')
+            from evorove_lead.research_config import AnthropicResearchCompletion
+            classifier = AnthropicResearchCompletion(key, model, effort='medium')
+        report, _cold_ready = SourceAnalyzer(engine,classifier).run(business_id)
+        summary['analysis'] = report
+    engine.dispose()
+    return summary
+
 def main() -> None:
     import argparse
     import json
@@ -190,7 +223,17 @@ def main() -> None:
     parser.add_argument("--preflight", action="store_true")
     parser.add_argument("--probe-search", action="store_true")
     parser.add_argument("--research-dry-run", action="store_true")
+    parser.add_argument("--source-dry-run", action="store_true")
+    parser.add_argument("--collect-only", action="store_true")
+    parser.add_argument("--analyze-only", action="store_true")
     args = parser.parse_args()
+    if args.collect_only and args.analyze_only:
+        parser.error("choose only one of --collect-only and --analyze-only")
+    if (args.collect_only or args.analyze_only) and not args.source_dry_run:
+        parser.error("--collect-only and --analyze-only require --source-dry-run")
+    if args.source_dry_run:
+        print(json.dumps(run_source_dry_run(collect_only=args.collect_only, analyze_only=args.analyze_only), indent=2))
+        return
     if args.preflight:
         report = preflight(probe_search=args.probe_search)
         print(json.dumps(report, indent=2))
