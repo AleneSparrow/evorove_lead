@@ -11,7 +11,8 @@ from sqlalchemy.orm import Session
 from evorove_lead.candidate import accept_candidate
 from evorove_lead.crm_touch import assembled_touch, stable_person_id
 from evorove_lead.handoff import Cycle1Handoff
-from evorove_lead.company_facts import assess_us
+from evorove_lead.decision_maker import find_named_leader
+from evorove_lead.enrichment_queue import enrich_company
 from evorove_lead.lead_playbooks import screen_lead
 from evorove_lead.source_core_models import SourceCompany, SourcePerson, SourceContact, SourceRawPage, SourceSignal
 
@@ -58,7 +59,7 @@ class SourceAnalyzer:
         """DB is the only evidence input. Produces Cold-ready payloads, never delivers."""
         now = self.clock()
         playbook = self.playbook
-        counts = Counter();ranked=[];seen=set();seen_emails=set();cost=0;costs=[];cold=[]
+        counts = Counter();ranked=[];seen=set();seen_emails=set();cost=0;costs=[];cold=[];scored=[];enrichment=[]
         with Session(self.engine) as db:
             signals = db.scalars(select(SourceSignal).where(SourceSignal.business_id==business_id).order_by(SourceSignal.signal_date.desc())).all()
             for signal in signals:
@@ -93,28 +94,25 @@ class SourceAnalyzer:
                     contact_channel, contact_value = "email", contact.email
                 else:
                     person = next(iter(people), None)
-                    if person is None:
-                        counts['no_named_person']+=1;continue
                     contact = next((c for c in contacts if c.email and c.evidence_url in page_urls), None)
                     form = _contact_form(fresh)
                     if contact is not None:
                         contact_channel, contact_value = "email", contact.email
                     elif form:
-                        contact, contact_channel, contact_value = None, "form", form
+                        contact_channel, contact_value = "form", form
                     else:
-                        counts['no_contact_path']+=1;continue
+                        contact_channel, contact_value = "", ""
+                    if person is None:
+                        found = find_named_leader(tuple((p.url, p.text, ()) for p in fresh))
+                        person_name, person_role = (found[0], found[1]) if found else ("", "")
+                    else:
+                        person_name, person_role = person.name, person.role
                 evidence=' '.join([signal.source_text,*[p.text for p in fresh]])
                 if playbook is not None and signal.signal_type == "competitor":
                     counts['competitor']+=1;continue
                 if playbook is None:
                     us_ok = any(_US.search(p.text) for p in fresh)
                     if not us_ok:
-                        counts['country_not_confirmed']+=1;continue
-                else:
-                    verdict = assess_us(evidence, domain=signal.domain)
-                    if verdict["status"] == "needs_review":
-                        counts['needs_review']+=1;continue
-                    if verdict["status"] != "confirmed":
                         counts['country_not_confirmed']+=1;continue
                 if signal.quote not in signal.source_text:
                     counts['ungrounded_quote']+=1;continue
@@ -126,11 +124,39 @@ class SourceAnalyzer:
                     kind = signal.signal_type
                 else:
                     decision = screen_lead(playbook, evidence=evidence, domain=signal.domain, quote=signal.quote,
-                        age_days=age.days, context_only=bool(signal.context_only))
+                        age_days=age.days, context_only=bool(signal.context_only), person_name=person_name,
+                        person_role=person_role, email_mx=contact is not None and bool(contact.email),
+                        contact_form=form)
                     if decision.rejection:
                         counts[decision.rejection]+=1;continue
+                    if decision.level == "B":
+                        enriched = enrich_company(domain=signal.domain, pages=tuple((p.url, p.text) for p in fresh),
+                            gaps=decision.gaps)
+                        enrichment.append({"domain": signal.domain, **enriched.as_dict()})
+                        if enriched.person_name or enriched.contact_form or enriched.quote:
+                            decision = screen_lead(playbook, evidence=evidence, domain=signal.domain, quote=signal.quote or enriched.quote,
+                                age_days=age.days, context_only=bool(signal.context_only),
+                                person_name=enriched.person_name or person_name,
+                                person_role=enriched.person_role or person_role,
+                                email_mx=contact is not None and bool(getattr(contact, "email", "")),
+                                contact_form=enriched.contact_form or form)
+                            if enriched.contact_form and not contact_value:
+                                contact_channel, contact_value = "form", enriched.contact_form
+                            if enriched.person_name:
+                                person_name, person_role = enriched.person_name, enriched.person_role or person_role
+                    counts[f"level_{decision.level}"] += 1
+                    scored.append({"domain": signal.domain, "fit": decision.fit, "intent": decision.intent,
+                        "reach": decision.reach, "total": decision.total, "level": decision.level,
+                        "temperature": decision.temperature, "gaps": list(decision.gaps),
+                        "contact_channel": contact_channel, "contact_value": contact_value,
+                        "person": person_name, "role": person_role})
+                    if decision.level != "A" or not decision.reason:
+                        counts['rules_passed']+=1
+                        continue
                     temperature, segment, hypothesis, reason = decision.temperature, decision.segment, playbook.id, decision.reason
                     kind = decision.kind
+                    if person is None:
+                        person = type("Named", (), {"name": person_name or company.name})()
                 if contact_channel == "email" and contact_value.casefold() in seen_emails:
                     counts['duplicate_person']+=1;continue
                 if contact_channel == "email":
@@ -154,8 +180,14 @@ class SourceAnalyzer:
                 touch['payload'].update(signal_type=signal.signal_type,signal_date=shown_date,
                     source_url=signal.source_url,quote=signal.quote,reason=reason,reason_quotes=list(quotes or (reason,)),
                     evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
-                    source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind,
-                    contact_channel=contact_channel,contact_value=contact_value)
+                    source_id=signal.source_id or signal.source,signal_temperature=temperature,temperature=temperature,
+                    detected_signal=kind,contact_channel=contact_channel,contact_value=contact_value,
+                    fit=decision_score(scored, signal.domain, "fit"),
+                    intent=decision_score(scored, signal.domain, "intent"),
+                    reach=decision_score(scored, signal.domain, "reach"),
+                    total=decision_score(scored, signal.domain, "total"),
+                    level=decision_score(scored, signal.domain, "level"),
+                    gaps=decision_score(scored, signal.domain, "gaps"))
                 cold.append(touch);counts['cold_ready']+=1
                 continue
             if self.classifier is None:
@@ -188,8 +220,18 @@ class SourceAnalyzer:
                 source_url=signal.source_url,quote=signal.quote,reason=reason,evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
                 source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind)
             cold.append(touch);counts['cold_ready']+=1
-        report={'signals':len(signals),'rejections':{k:v for k,v in counts.items() if k not in {'rules_passed','model_analyzed','cold_ready'}},
+        kept = {'rules_passed','model_analyzed','cold_ready'}
+        report={'signals':len(signals),'rejections':{k:v for k,v in counts.items() if k not in kept and not str(k).startswith('level_')},
             'rules_passed':counts['rules_passed'],'model_analyzed':counts['model_analyzed'],'cold_ready':counts['cold_ready'],
+            'levels':{'A':counts['level_A'],'B':counts['level_B'],'C':counts['level_C']},
+            'scored':scored,'enrichment':enrichment,
             'cost_usd':cost/1_000_000,'cost_usd_per_candidate':cost/1_000_000/counts['model_analyzed'] if counts['model_analyzed'] else None,
             'cost_usd_per_lead':cost/1_000_000/len(cold) if cold else None,'candidate_costs_usd':costs}
         return report,tuple(cold)
+
+
+def decision_score(rows, domain, key):
+    for row in rows:
+        if row["domain"] == domain:
+            return row[key]
+    return [] if key == "gaps" else 0

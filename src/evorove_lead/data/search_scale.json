@@ -1,0 +1,12 @@
+{
+  "describes": "search_scale",
+  "version": "2026-10-26.1",
+  "shape": "{service} {city}",
+  "searxng_queries_per_day": 30,
+  "google_cse_free_queries_per_day": 100,
+  "schedule": "one batch per UTC day; the next run continues at next_index",
+  "cities": [
+    "New York", "Los Angeles", "Chicago", "Houston", "Phoenix",
+    "Philadelphia", "San Antonio", "San Diego", "Dallas", "Austin"
+  ]
+}

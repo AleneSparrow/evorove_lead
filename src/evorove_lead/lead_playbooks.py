@@ -88,6 +88,13 @@ class PlaybookDecision:
     segment: str = ""
     reason: str = ""
     quotes: tuple[str, ...] = ()
+    fit: int = 0
+    intent: int = 0
+    reach: int = 0
+    total: int = 0
+    level: str = ""
+    gaps: tuple[str, ...] = ()
+    matched: tuple[str, ...] = ()
 
 
 def load_playbooks() -> tuple[LeadPlaybook, ...]:
@@ -179,26 +186,36 @@ def signal_temperature(playbook: LeadPlaybook, signal: dict, *, age_days: int, c
 
 
 def screen_lead(playbook: LeadPlaybook, *, evidence: str, domain: str, quote: str,
-                 age_days: int, context_only: bool) -> PlaybookDecision:
-    """Fit rules for one stored company. The reason is a sentence copied from the quote."""
+                 age_days: int, context_only: bool, person_name: str = "", person_role: str = "",
+                 email_mx: bool = False, contact_form: str = "", schema: str = "") -> PlaybookDecision:
+    """Score one stored company. Only an explicit disqualifier rejects it.
+
+    A missing name, contact path, US sign, deal sign, or sell-sentence lowers
+    Reach, Fit, or Intent. It does not reject the company.
+    """
     for rule in playbook.exclusions:
         code = _exclusion(playbook, rule, evidence, domain)
         if code:
             return PlaybookDecision(rejection=code)
-    if not _deal_shown(playbook, evidence):
-        return PlaybookDecision(rejection="deal_size_not_shown")
-    quotes = fit_quotes(playbook, evidence)
-    if not quotes:
-        return PlaybookDecision(rejection="no_page_reason")
+    from evorove_lead.qualification_score import ScoreInput, score_company
+    scored = score_company(ScoreInput(
+        evidence=evidence, domain=domain, person_name=person_name, person_role=person_role,
+        email_mx=email_mx, contact_form=contact_form, schema=schema,
+    ))
+    if scored.rejection:
+        return PlaybookDecision(rejection=scored.rejection)
     matched = _matching_signal(playbook, quote) or _matching_signal(playbook, evidence)
     if matched is None:
         kind, temperature = "page_reason", "cold"
     else:
         kind = matched["id"]
         temperature = signal_temperature(playbook, matched, age_days=age_days, context_only=context_only)
+    reason = scored.quotes[0] if scored.quotes else ""
     return PlaybookDecision(
         kind=kind, temperature=temperature, segment=_segment(playbook, evidence),
-        reason=quotes[0], quotes=quotes)
+        reason=reason, quotes=scored.quotes, fit=scored.fit, intent=scored.intent,
+        reach=scored.reach, total=scored.total, level=scored.level, gaps=scored.gaps,
+        matched=scored.matched)
 
 
 def _matching_signal(playbook: LeadPlaybook, text: str) -> dict | None:

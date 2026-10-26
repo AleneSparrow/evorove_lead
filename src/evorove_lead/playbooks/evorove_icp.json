@@ -1,7 +1,7 @@
 {
   "id": "evorove_icp",
   "title": "Evorove ICP",
-  "version": "2026-10-26.1",
+  "version": "2026-10-26.2",
   "describes": "lead_segments",
   "lead_summary": "US B2B businesses with high-value deals that want to replace or avoid a sales team. For client 0 these are Evorove's own buyers.",
   "client_note": "A playbook names the leads a client wants found. It does not name the client's own industry. Client 0's leads are the companies that could buy Evorove. The subsegments below are searched together, not queued.",
@@ -166,7 +166,7 @@
     ]
   },
   "exclusions": [
-    {"id": "not_us", "method": "already_applied", "how": "Analysis already requires a fresh page that places the company in the US. A non-US fact never reaches the playbook rules."},
+    {"id": "not_us", "method": "already_applied", "how": "A schema.org country other than the US, or an explicit non-US place such as the United Kingdom, is a hard reject in data/qualification_score.json. No US sign at all only lowers Fit. It is not a reject."},
     {"id": "advertisement", "method": "already_applied", "how": "A stored advertisement flag is rejected before the playbook rules."},
     {"id": "blocklist", "method": "shared_blocklist", "how": "Job boards, social networks, encyclopedias, dictionaries, question sites, list catalogs, marketplaces, and listed large corporations are dropped before a page is fetched. The host list is data/domain_blocklist.json."},
     {"id": "competitor", "method": "competitor_offer", "how": "The search title and snippet, or the page title, h1, meta description, and navigation, offer lead generation, outbound, cold email, sales automation, an SDR service, appointment setting, or a sales agency. That company sells the same motion Evorove sells. The patterns are data/competitor_offers.json. A case-study mention in the body is not this surface."},
@@ -197,7 +197,7 @@
     {"id": "trade_press", "status": "needs_research", "why": "needs_research: industry_rss is disabled. A dated article about a new service or a marketing change is not collected."}
   ],
   "touch_angles": [
-    "The Cold reason is one or two verbatim sentences from the company's own page about what it sells and to whom. A dated sales, hiring, or growth event sets the temperature. It is not required for the person to be cold.",
+    "Cold is level A on the point score in data/qualification_score.json: Fit, Intent, and Reach. A missing name, contact, or event lowers a score. It does not reject the company. Only an explicit disqualifier rejects. The Cold reason is still one or two verbatim sentences from the company's own page. Temperature stays hot, warm, or cold from the dated event.",
     "A deal-size sign (book a call, custom pricing, a from-price at or above $5000 a year, a case-study phrase, or a team of more than one) can be stated only by copying the page. It is a fit check. It is not a claim that the company asked for Evorove.",
     "The US sentence that placed the company can be copied. A country that was not on the page cannot.",
     "Do not invent a price, a discount, a guarantee, or a legal claim. This repository does not write the letter."

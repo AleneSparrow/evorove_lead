@@ -123,8 +123,9 @@ def test_deal_size_and_exclusions_do_not_call_a_model():
         age_days=1, context_only=False).rejection == "job_board"
     assert screen_lead(book, evidence=QUOTE + " Book a call.", domain="linkedin.com", quote=QUOTE,
         age_days=1, context_only=False).rejection == "social"
-    assert screen_lead(book, evidence="We updated the homepage. Book a call.", domain="northwind.example",
-        quote="We updated the homepage.", age_days=1, context_only=False).rejection == "no_page_reason"
+    missing_quote = screen_lead(book, evidence="We updated the homepage. Book a call.", domain="northwind.example",
+        quote="We updated the homepage.", age_days=1, context_only=False)
+    assert missing_quote.rejection == "" and missing_quote.level == "C" and "quote" in missing_quote.gaps
     portrait = screen_lead(book, evidence="Northwind is a marketing agency for B2B teams. Book a call.",
         domain="northwind.example", quote="We updated the homepage.", age_days=1, context_only=True)
     assert portrait.rejection == "" and portrait.temperature == "cold" and portrait.kind == "page_reason"
@@ -372,34 +373,51 @@ def test_needs_review_does_not_become_cold():
     Base.metadata.create_all(engine)
     _store(engine, page="We are hiring an SDR. Book a call. Plans cost $8000 a year.")
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
-    assert touches == () and report["rejections"] == {"needs_review": 1}
+    assert touches == () and report["cold_ready"] == 0
+    assert report["levels"]["C"] == 1 and "needs_review" not in report["rejections"]
+    assert report["rejections"] == {}
 
 
 def test_a_portrait_without_an_event_is_cold_and_a_missing_person_or_path_is_not():
     page = "Northwind is a marketing agency based in the United States. Book a call."
+    ready = page + " Our team includes a founder and a sales lead."
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    _store(engine, page=ready, quote="We updated the homepage.", context_only=True)
+    report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
+    assert report["cold_ready"] == 1 and report["levels"]["A"] == 1
+    assert touches[0]["payload"]["signal_temperature"] == "cold"
+    assert touches[0]["payload"]["temperature"] == "cold"
+    assert touches[0]["payload"]["level"] == "A"
+    assert touches[0]["payload"]["detected_signal"] == "page_reason"
+    assert {"fit", "intent", "reach", "total", "gaps"} <= set(touches[0]["payload"])
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     _store(engine, page=page, quote="We updated the homepage.", context_only=True)
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
-    assert report["cold_ready"] == 1 and touches[0]["payload"]["signal_temperature"] == "cold"
-    assert touches[0]["payload"]["detected_signal"] == "page_reason"
+    assert touches == () and report["levels"]["B"] == 1 and report["cold_ready"] == 0
+    assert report["scored"][0]["temperature"] == "cold"
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     _store(engine, page=page + " contact_form https://northwind.example/contact fields name|email|message",
         quote="We updated the homepage.", context_only=True, contact=False)
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
-    assert touches[0]["payload"]["contact_channel"] == "form"
-    assert touches[0]["payload"]["contact_value"] == "https://northwind.example/contact"
+    assert touches == () and report["levels"]["B"] == 1
+    assert report["scored"][0]["contact_channel"] == "form"
+    assert report["scored"][0]["contact_value"] == "https://northwind.example/contact"
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     _store(engine, page=page, person=False, contact=False)
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
-    assert touches == () and report["rejections"] == {"no_named_person": 1}
+    assert touches == () and report["cold_ready"] == 0 and "no_named_person" not in report["rejections"]
+    assert report["levels"]["B"] == 1 and "named_decision_maker" in report["scored"][0]["gaps"]
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
     _store(engine, page=page, contact=False)
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
-    assert touches == () and report["rejections"] == {"no_contact_path": 1}
+    assert touches == () and "no_contact_path" not in report["rejections"]
+    assert report["levels"]["B"] == 1
+    assert "email_mx" in report["scored"][0]["gaps"] and "contact_form" in report["scored"][0]["gaps"]
 
 
 def test_saved_list_page_yields_names_and_domains_without_the_description():

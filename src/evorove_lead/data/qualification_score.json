@@ -1,0 +1,127 @@
+{
+  "describes": "qualification_score",
+  "version": "2026-10-26.1",
+  "minimum_usd_per_year": 5000,
+  "levels": {"A": 70, "B": 50},
+  "fit": {
+    "max": 50,
+    "groups": [
+      {
+        "id": "b2b",
+        "points": 18,
+        "stack": false,
+        "items": [
+          {
+            "id": "b2b_services",
+            "pattern": "\\b(?:marketing agency|design agency|development agency|automation agency|managed IT|cybersecurity|IT consulting|management consulting|corporate training|leadership training|recruiting firm|staffing agency|executive search|equipment supplier|logistics company|wholesale supplier|equipment distributor|for b2b|b2b (?:companies|teams|clients|customers|businesses|services))\\b"
+          },
+          {
+            "id": "b2b_software",
+            "pattern": "\\b(?:construction software|logistics software|manufacturing software|field service software|b2b software|vertical software|saas)\\b"
+          }
+        ]
+      },
+      {
+        "id": "us",
+        "stack": false,
+        "points_by_strength": {"strong": 14, "weak": 6}
+      },
+      {
+        "id": "size",
+        "points": 8,
+        "stack": false,
+        "items": [
+          {"id": "headcount", "method": "headcount_10_200"},
+          {"id": "offices", "pattern": "\\b(?:our offices|offices in|multiple offices)\\b"},
+          {"id": "team", "method": "team_sign"}
+        ]
+      },
+      {
+        "id": "deal",
+        "points": 10,
+        "stack": false,
+        "items": [
+          {"id": "book_a_call", "pattern": "\\b(?:book|schedule)\\s+a\\s+(?:call|consultation)\\b|\\btalk to sales\\b|\\brequest a quote\\b"},
+          {"id": "custom_pricing", "pattern": "\\b(?:custom pricing|contact us for pricing|pricing on request)\\b"},
+          {"id": "b2b_case_study", "pattern": "\\b(?:case study|case studies|clients include)\\b"},
+          {"id": "from_price", "method": "from_price_at_or_above_floor"}
+        ]
+      }
+    ]
+  },
+  "intent": {
+    "max": 30,
+    "items": [
+      {
+        "id": "sales_led",
+        "points": 8,
+        "pattern": "\\b(?:book|schedule)\\s+a\\s+(?:call|consultation)\\b|\\brequest a quote\\b|\\btalk to sales\\b"
+      },
+      {
+        "id": "open_role",
+        "points": 6,
+        "pattern": "\\bhiring\\b.{0,60}\\b(?:sdr|salesperson|sales manager|sales director|sales leader|vp of sales|head of sales|account executive|business development|marketing manager|marketing director|head of marketing|demand generation|content marketer)\\b|\\b(?:now hiring|we are hiring|we're hiring)\\b.{0,60}\\b(?:sales|sdr|account executive|business development|marketing)\\b|\\b(?:open|new)\\s+(?:sales|marketing)\\s+(?:role|position)\\b|\\bjoin our sales team\\b"
+      },
+      {
+        "id": "team_growth",
+        "points": 5,
+        "pattern": "\\b(?:growing (?:the|our) team|team is growing|we are growing|we're growing|new office|we are expanding|we're expanding|expanding our|opened a new office)\\b|\\badded \\d+ (?:people|employees|hires)\\b"
+      },
+      {
+        "id": "new_launch",
+        "points": 4,
+        "pattern": "\\b(?:launch(?:ed|ing)?|introduc(?:ed|ing))\\b.{0,50}\\b(?:service|practice|offering|line)\\b|\\bnew (?:service|practice|offering)\\b|\\bnow offering\\b|\\b(?:excited to announce|pleased to announce|announcing our)\\b"
+      },
+      {
+        "id": "case_studies",
+        "points": 4,
+        "pattern": "\\b(?:published|released|posted)\\b.{0,40}\\bcase stud(?:y|ies)\\b|\\b(?:new|latest)\\s+case stud(?:y|ies)\\b|\\bcase stud(?:y|ies)\\b"
+      },
+      {
+        "id": "fresh_dated",
+        "points": 3,
+        "method": "fresh_page_date",
+        "max_age_days": 90
+      }
+    ]
+  },
+  "reach": {
+    "max": 20,
+    "items": [
+      {
+        "id": "named_decision_maker",
+        "points": 10,
+        "roles": ["founder", "co-founder", "cofounder", "owner", "co-owner", "ceo", "president", "managing director", "head of sales"]
+      },
+      {"id": "email_mx", "points": 6, "method": "published_email_with_mx"},
+      {"id": "contact_form", "points": 4, "method": "contact_form"}
+    ]
+  },
+  "disqualifiers": [
+    {"id": "competitor", "method": "competitor_offer"},
+    {"id": "b2c", "pattern": "\\b(?:for homeowners|for families|for consumers|add to cart|shop now|direct to consumer)\\b"},
+    {"id": "local_consumer", "pattern": "\\b(?:dental practice|dental office|hair salon|nail salon|auto repair shop|plumbing company|roofing company)\\b"},
+    {"id": "regulated", "pattern": "\\b(?:law firm|law office|attorney at law|medical practice|our clinic|we are a bank|insurance agency|financial advisory firm)\\b"},
+    {"id": "not_us", "method": "strong_non_us"},
+    {"id": "low_ticket", "method": "from_price_below_floor"},
+    {"id": "platform", "method": "platform_or_aggregator"}
+  ],
+  "not_us": {
+    "schema_countries_us": ["us", "usa", "u.s.", "united states"],
+    "places": ["United Kingdom", "England", "Scotland", "Wales", "Canada", "Australia", "Germany", "France", "India", "Ireland", "Singapore", "Netherlands"],
+    "place_pattern": "\\b(?:based|headquartered|located|our office)\\b.{0,48}\\b(?:United Kingdom|England|Scotland|Wales|Canada|Australia|Germany|France|India|Ireland|Singapore|Netherlands|UK)\\b|\\b(?:United Kingdom|UK)-based\\b|\\bUK\\s+B2B\\b"
+  },
+  "enrichment": {
+    "max_page_fetches": 3,
+    "order": ["linked_pages", "json_ld", "saved_text_model", "forms"],
+    "page_slugs": ["about", "team", "contact", "leadership", "careers"]
+  },
+  "extraction": {
+    "model": "claude-haiku-5-5",
+    "effort": "low",
+    "max_output_tokens": 300,
+    "max_quote_chars": 280,
+    "default_max_run_usd": 0.5,
+    "calls_per_company": 1
+  }
+}
