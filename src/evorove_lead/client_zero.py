@@ -36,14 +36,8 @@ OWNER_MATERIALS_DIR = Path(os.getenv("OWNER_MATERIALS_DIR") or (Path.cwd() / "ow
 class _WithOwnerMaterials:
     """The live site, plus whatever the owner deposited in `owner-materials/`.
 
-    The live page is real, but its own marketing style (hero taglines,
-    FAQ headings) reads poorly for `offer_reader.py`'s plain-English
-    heuristics. This never replaces the live fetch -- it only adds
-    deposited files ahead of it, so a clean, ordinary sentence there can
-    stand as the offer's `what_we_sell` (used first) while the live page
-    still supplies its own audience mentions and price. An empty or
-    missing directory changes nothing: `owner-materials/` already exists
-    as an optional, git-tracked spot for this (see its own README).
+    Deposited files add context to the marketing reader; the public site
+    remains a sufficient input. An empty or missing directory changes nothing.
     """
 
     def __init__(self, live: PresenceSource, materials_dir: Path) -> None:
@@ -184,14 +178,25 @@ def preflight(*, probe_search=False):
     return report
 
 
-def client_zero_source_analysis(business_id: str):
-    """Brief already on disk. The buyer is a US B2B business with a high-value deal."""
-    from evorove_lead.source_planner import client_zero_analysis
-    path = OWNER_MATERIALS_DIR / "service.txt"
-    brief = path.read_text(encoding="utf-8") if path.is_file() else ""
-    if "US B2B businesses" not in brief:
-        raise RuntimeError("client 0 brief is missing the confirmed ICP")
-    return client_zero_analysis(business_id, brief)
+def client_zero_source_analysis(
+    business_id: str,
+    *,
+    presence: PresenceSource | None = None,
+    marketing_analyzer=None,
+):
+    """Read module 1's public-site materials into a grounded search brief.
+
+    The deposited catalog remains optional and is read by the same presence
+    source as the normal cycle-1 path. Source-mode briefing uses the AI
+    marketing reader selected by AI_PROVIDER and fails closed without it.
+    """
+    from evorove_lead.source_planner import client_analysis_from_marketing
+
+    materials = (presence or client_zero_presence()).load(client_zero_seed())
+    analyzer = marketing_analyzer if marketing_analyzer is not None else marketing_analyzer_from_env()
+    if analyzer is None:
+        raise RuntimeError("source brief requires AI_PROVIDER=anthropic")
+    return client_analysis_from_marketing(business_id, analyzer.analyze(materials))
 
 
 def resolve_source_plan(engine, analysis, playbook):

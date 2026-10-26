@@ -1,6 +1,7 @@
 """Pick catalog sources from a client analysis. The model may not invent sources."""
 from __future__ import annotations
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from sqlalchemy.orm import Session
@@ -8,6 +9,9 @@ from evorove_lead.evidence import digest
 from evorove_lead.search_planner import buyer_query_set
 from evorove_lead.source_catalog import CATALOG, CATALOG_VERSION, enabled_sources, source_by_id
 from evorove_lead.source_core_models import SourcePlanRow
+from evorove_lead.geo import infer_geo_radius
+from evorove_lead.marketing_analysis import MarketingAnalysis
+from evorove_lead.materials import DepositedMaterial
 
 PLAN_MAX_TOKENS = 800
 PLAN_EFFORT = "medium"
@@ -47,6 +51,41 @@ class ClientAnalysis:
     def brief_hash(self) -> str:
         body = json.dumps(self.as_dict(), ensure_ascii=False, sort_keys=True)
         return digest(CATALOG_VERSION + "\n" + body)
+
+
+def client_analysis_from_marketing(
+    business_id: str, reading: MarketingAnalysis,
+) -> ClientAnalysis:
+    """Map grounded 4P facts and evidenced STP segments into source planning."""
+    if reading.product is None:
+        raise ValueError("a grounded product statement is required for the source brief")
+    audiences = tuple(dict.fromkeys(segment.label for segment in reading.segments))
+    if not audiences:
+        raise ValueError("a grounded audience is required for the source brief")
+    # A bare "in Cold" or "in CRM" is board vocabulary, not a place claim.
+    # Only explicit location wording can narrow the US-market default.
+    place = reading.place.quote if reading.place is not None else ""
+    nationwide = bool(re.search(r"\b(?:United States|USA|U\.S\.)\b", place, re.IGNORECASE))
+    explicit_place = bool(re.search(
+        r"\b(?:serves|serving|near|based in|located in)\b|\bin\s+[A-Z][a-z]+,\s*(?:[A-Z]{2}|[A-Z][a-z]+)",
+        place, re.IGNORECASE,
+    ))
+    radius = infer_geo_radius((DepositedMaterial(reading.place.source_name, place),)) if explicit_place and reading.place else None
+    locality = radius.locality if radius else ""
+    geography = f"{locality}, United States" if locality else "United States"
+    source_lines = [reading.product.quote, *(segment.evidence_quote for segment in reading.segments)]
+    if reading.place is not None and (locality or nationwide):
+        source_lines.append(place)
+    source_lines.extend(fact.quote for fact in (reading.price, reading.promotion) if fact is not None)
+    return ClientAnalysis(
+        business_id=business_id,
+        brief="\n".join(source_lines),
+        customer_categories=audiences,
+        geography=geography,
+        localities=(locality,) if locality else (),
+        services=(reading.product.quote,),
+        icp_segments=audiences,
+    )
 
 
 @dataclass(frozen=True)

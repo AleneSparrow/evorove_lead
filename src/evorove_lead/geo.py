@@ -27,9 +27,9 @@ from evorove_lead.materials import DepositedMaterial
 # "in Start" -- a fabricated city that never existed on the page as a
 # sentence.
 _LOCALITY_RE = re.compile(
-    r"\b(?<![Ss]ign )(?<![Ll]og )(?:[Ii]n|[Nn]ear|[Ss]erving|[Bb]ased in|[Ll]ocated in)\s+"
+    r"\b(?<![Ss]ign )(?<![Ll]og )(?:[Ii]n|[Nn]ear|[Ss]erves|[Ss]erving|[Bb]ased in|[Ll]ocated in)\s+"
     r"([A-Z][a-zA-Z]+(?:\s[A-Z][a-zA-Z]+){0,2})"
-    r"(?:,\s*([A-Z]{2}))?\b"
+    r"(?:,\s*([A-Z]{2}|[A-Z][a-z]+))?\b"
 )
 
 # This product's own board vocabulary (FOUNDATION.md's four CRM tabs:

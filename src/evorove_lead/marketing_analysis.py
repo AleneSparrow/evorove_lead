@@ -42,7 +42,7 @@ _INVENTED_COMMERCIAL = re.compile(
     re.IGNORECASE,
 )
 
-_SYSTEM = """You analyze a US small business from its own public materials.
+_SYSTEM = """You analyze a business selling to the US market from its own public materials.
 Return one JSON object and nothing else.
 
 The object has:
@@ -53,6 +53,8 @@ The object has:
 
 The label is your inference of the buyer of THIS offer. It does not have to appear verbatim.
 evidence_quote and every 4P quote must be copied verbatim from the named source.
+Treat slogans and FAQ questions as marketing copy, not statements of the product or market.
+Use explicit geographic claims for place; board stages or software terms are not cities.
 When the materials distinguish the buyer from that buyer's own customers, label the buyer.
 channel is where that buyer can be found on the public web.
 """
@@ -349,6 +351,9 @@ def _fact_or_none(value: object, by_name: dict[str, DepositedMaterial]) -> Quote
     quote = str(value.get("quote") or "").strip()
     source_name = str(value.get("source_name") or "").strip()
     if not quote or len(quote) > _MAX_QUOTE_CHARS:
+        return None
+    letters = [character for character in quote if character.isalpha()]
+    if "?" in quote or (letters and sum(character.isupper() for character in letters) / len(letters) > 0.8):
         return None
     if not _is_grounded(quote, source_name, by_name):
         return None
