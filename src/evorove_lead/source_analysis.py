@@ -221,7 +221,7 @@ class SourceAnalyzer:
                 source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind)
             cold.append(touch);counts['cold_ready']+=1
         kept = {'rules_passed','model_analyzed','cold_ready'}
-        report={'signals':len(signals),'rejections':{k:v for k,v in counts.items() if k not in kept and not str(k).startswith('level_')},
+        report={'candidates_with_pain':0, 'candidates_without_pain':len(cold), 'pain_ratio':0.0 if cold else None, 'signals':len(signals),'rejections':{k:v for k,v in counts.items() if k not in kept and not str(k).startswith('level_')},
             'rules_passed':counts['rules_passed'],'model_analyzed':counts['model_analyzed'],'cold_ready':counts['cold_ready'],
             'levels':{'A':counts['level_A'],'B':counts['level_B'],'C':counts['level_C']},
             'scored':scored,'enrichment':enrichment,

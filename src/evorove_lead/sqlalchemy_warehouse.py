@@ -191,6 +191,9 @@ def _candidate_to_row(record: CandidateRecord) -> CandidateRow:
         email=record.email or None,
         phone=record.phone or None,
         rejection_reason=record.rejection_reason,
+        observed_pain=record.observed_pain,
+        pain_evidence_excerpt=record.pain_evidence_excerpt,
+        pain_evidence_source=record.pain_evidence_source,
         channel=record.channel,
         reason=record.reason,
         reason_source=record.reason_source,
@@ -220,6 +223,9 @@ def _candidate_from_row(row: CandidateRow) -> CandidateRecord:
         email=row.email or "",
         phone=row.phone or "",
         rejection_reason=row.rejection_reason or "",
+        observed_pain=row.observed_pain or "",
+        pain_evidence_excerpt=row.pain_evidence_excerpt or "",
+        pain_evidence_source=row.pain_evidence_source or "",
     )
 
 

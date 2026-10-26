@@ -32,6 +32,7 @@ from evorove_lead.platforms import is_platform
 from evorove_lead.warehouse import new_id, CandidateRecord, HypothesisRecord, TraceRecord, RejectedTraceRecord
 from evorove_lead.offer_reader import read_offer
 from evorove_lead.offer import OfferRejected
+from evorove_lead.observed_pain import attach_observed_pain, pain_counts
 from evorove_lead.candidate import Candidate
 from evorove_lead.handoff import Cycle1Handoff
 from evorove_lead.crm_touch import assembled_touch, stable_person_id, RecordingLeadTouchSink, OutboxCrmLeadTouchSink
@@ -310,11 +311,12 @@ class ResearchPipeline:
                             rank = CommercialOpportunityRanker().rank(gate, assessment)
                             self.store.save(seed.business_id, "ranking", decision_id, rank.model_dump(mode="json"))
                             candidate = Candidate(identity=identity, reason=gate.reason, reason_source=gate.reason_source)
+                            candidate = attach_observed_pain(candidate, offer, tuple((s.final_url, s.content) for s in bundle.sources))
                             email = identity if "@" in identity else None
                             phone = identity if not email else None
                             person_id = stable_person_id(seed.business_id, phone=phone, email=email, identity=identity)
                             handoff = Cycle1Handoff.from_candidate(candidate, "email" if email else "phone", person_id=person_id, hypothesis_id=hypothesis_id)
-                            record = CandidateRecord(id=candidate_id, business_id=seed.business_id, hypothesis_id=hypothesis_id, identity=identity, channel=handoff.channel, reason=gate.reason, reason_source=gate.reason_source, fit=assessment.product_fit.score or 0, evidence=assessment.need_evidence.score or 0, addressable=True, decision="cold", decided_at=self.clock(), trace_id=trace_id, email=email or "", phone=phone or "")
+                            record = CandidateRecord(id=candidate_id, business_id=seed.business_id, hypothesis_id=hypothesis_id, identity=identity, channel=handoff.channel, reason=gate.reason, reason_source=gate.reason_source, fit=assessment.product_fit.score or 0, evidence=assessment.need_evidence.score or 0, addressable=True, decision="cold", decided_at=self.clock(), trace_id=trace_id, email=email or "", phone=phone or "", observed_pain=candidate.observed_pain, pain_evidence_excerpt=candidate.pain_evidence_excerpt, pain_evidence_source=candidate.pain_evidence_source)
                             payload = assembled_touch(seed.business_id, candidate, handoff, segment=h.segment)
                             seen_contacts.add(identity.casefold())
                             ranked.append((rank.score, record, payload, candidate, handoff, h.stable_key, decision_id, tuple(c.id for c in bundle.claims)))
@@ -388,6 +390,7 @@ class ResearchPipeline:
                 raise
             finally:
                 state["finished_at"] = self.clock().isoformat()
+                state.update(pain_counts(accepted))
                 state["qualified"] = len(accepted)
                 state["handoffs"] = len(handoffs)
                 save()

@@ -59,6 +59,7 @@ def summarize(result: GenerationResult) -> dict[str, object]:
         "status": result.status.value,
         "offer_understood": result.offer is not None,
         "cold": len(result.handoffs),
+        **result.pain_counts,
         "rejected": [{"identity": hit.identity, "why": hit.why} for hit in result.rejected],
     }
 

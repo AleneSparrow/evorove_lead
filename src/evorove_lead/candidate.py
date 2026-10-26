@@ -29,6 +29,9 @@ class Candidate:
     identity: str
     reason: str
     reason_source: str
+    observed_pain: str = ""
+    pain_evidence_excerpt: str = ""
+    pain_evidence_source: str = ""
 
 
 def _require(field: str, value: str) -> str:

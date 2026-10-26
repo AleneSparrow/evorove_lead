@@ -72,12 +72,13 @@ def client_zero_seed() -> BusinessSeed:
     )
 
 
-def search_summary(result) -> dict[str, int | str]:
+def search_summary(result) -> dict[str, int | float | str | None]:
     """Counts the owner can read. Never a contact."""
 
     return {
         "status": result.status.value,
         "candidates": len(result.candidates),
+        **result.pain_counts,
         "handoffs": len(result.handoffs),
         "rejected": len(result.rejected),
         "messages_sent": 0,
@@ -323,6 +324,11 @@ def main() -> None:
             **summary
         )
     )
+    print("candidates_with_pain={with_pain} candidates_without_pain={without_pain} pain_ratio={ratio}".format(
+        with_pain=summary.get("candidates_with_pain", 0),
+        without_pain=summary.get("candidates_without_pain", 0),
+        ratio=summary.get("pain_ratio"),
+    ))
     if summary.get("stop_reason"):
         print("stop_reason=" + str(summary["stop_reason"]))
     if summary["status"] in {"search_unconnected", "failed", "partial", "budget_exhausted"}:

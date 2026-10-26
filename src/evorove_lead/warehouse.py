@@ -103,6 +103,9 @@ class CandidateRecord:
     email: str = ""
     phone: str = ""
     rejection_reason: str = ""
+    observed_pain: str = ""
+    pain_evidence_excerpt: str = ""
+    pain_evidence_source: str = ""
 
 
 @dataclass(frozen=True)

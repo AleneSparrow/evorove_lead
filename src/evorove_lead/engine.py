@@ -12,6 +12,7 @@ from typing import Sequence
 
 from evorove_lead.run_ownership import guarded_call, check_ownership
 from evorove_lead.business import BusinessSeed
+from evorove_lead.observed_pain import attach_observed_pain, pain_counts
 from evorove_lead.candidate import Candidate, CandidateRejected, accept_candidate
 from evorove_lead.selection import Selection, SelectionProfile, select
 from evorove_lead.handoff import Cycle1Handoff
@@ -83,6 +84,10 @@ class GenerationResult:
     rejected: tuple[RejectedHit, ...]
 
     stop_reason: str = ""
+
+    @property
+    def pain_counts(self) -> dict[str, int | float | None]:
+        return pain_counts(self.candidates)
 
     @property
     def sent_messages(self) -> tuple[()]:
@@ -265,6 +270,7 @@ class LeadGenerationEngine:
                         )
                     )
                 continue
+            candidate = attach_observed_pain(candidate, offer, ((hit.observed_source, hit.observed_fact),))
             accepted.append(candidate)
             name, phone, email = split_identity(candidate.identity)
             person_id = (
@@ -526,6 +532,7 @@ class LeadGenerationEngine:
                         )
                     continue
                 seen_identities.add(identity_key)
+                candidate = attach_observed_pain(candidate, offer, ((finding.url, finding.raw_text),))
                 accepted.append(candidate)
                 name, phone, email = split_identity(candidate.identity)
                 person_id = (
@@ -759,6 +766,9 @@ def _candidate_to_record(
         hypothesis_id=hypothesis_id,
         identity=candidate.identity,
         channel="email" if email else "phone" if phone else "unknown",
+        observed_pain=candidate.observed_pain,
+        pain_evidence_excerpt=candidate.pain_evidence_excerpt,
+        pain_evidence_source=candidate.pain_evidence_source,
         reason=candidate.reason,
         reason_source=candidate.reason_source,
         fit=selection.fit if selection else 1.0,

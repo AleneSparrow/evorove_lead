@@ -31,6 +31,7 @@ class Cycle1Handoff:
     channel: str
     person_id: str = ""
     hypothesis_id: str = ""
+    observed_pain: str = ""
 
     @classmethod
     def from_candidate(
@@ -41,6 +42,7 @@ class Cycle1Handoff:
         hypothesis_id: str = "",
     ) -> Cycle1Handoff:
         return cls(
+            observed_pain=candidate.observed_pain,
             identity=candidate.identity,
             reason=candidate.reason,
             reason_source=candidate.reason_source,

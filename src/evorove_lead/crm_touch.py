@@ -423,6 +423,7 @@ def assembled_touch(
         "identity": {"name": name, "phone": phone, "email": email},
         "identity_blob": candidate.identity,
         "payload": {
+            **({"observed_pain": handoff.observed_pain} if handoff.observed_pain else {}),
             "reason": candidate.reason,
             "reason_source": candidate.reason_source,
             "channel": handoff.channel,
