@@ -55,6 +55,8 @@ class LeadPlaybook:
     def queries(self) -> tuple[str, ...]:
         found = []
         for sub in self.subsegments:
+            if sub.get("status") == "needs_research":
+                continue
             found.extend(sub["queries"])
         return tuple(found)
 
@@ -85,6 +87,7 @@ class PlaybookDecision:
     temperature: str = ""
     segment: str = ""
     reason: str = ""
+    quotes: tuple[str, ...] = ()
 
 
 def load_playbooks() -> tuple[LeadPlaybook, ...]:
@@ -163,10 +166,16 @@ def team_larger_than_one(text: str) -> bool:
 
 
 def signal_temperature(playbook: LeadPlaybook, signal: dict, *, age_days: int, context_only: bool) -> str:
-    limit = playbook.context_days if context_only else playbook.event_days
-    if age_days < 0 or age_days > limit:
+    """Hot is a dated sales, hiring, or growth event inside 30 days.
+
+    The same kind of event inside 90 days, or an undated sign the playbook
+    marks warm, stays warm. Past 90 days the temperature is cold.
+    """
+    if age_days < 0 or age_days > playbook.context_days:
         return "cold"
-    return signal["context_temperature"] if context_only else signal["event_temperature"]
+    if context_only or age_days > playbook.event_days:
+        return signal["context_temperature"]
+    return signal["event_temperature"]
 
 
 def screen_lead(playbook: LeadPlaybook, *, evidence: str, domain: str, quote: str,
@@ -178,17 +187,76 @@ def screen_lead(playbook: LeadPlaybook, *, evidence: str, domain: str, quote: st
             return PlaybookDecision(rejection=code)
     if not _deal_shown(playbook, evidence):
         return PlaybookDecision(rejection="deal_size_not_shown")
-    matched = next((item for item in playbook.signals if re.search(item["pattern"], quote or "", re.I)), None)
+    quotes = fit_quotes(playbook, evidence)
+    if not quotes:
+        return PlaybookDecision(rejection="no_page_reason")
+    matched = _matching_signal(playbook, quote) or _matching_signal(playbook, evidence)
     if matched is None:
-        return PlaybookDecision(rejection="no_playbook_signal")
-    sentence = _signal_sentence(quote, matched["pattern"])
-    if not sentence:
-        return PlaybookDecision(rejection="ungrounded_reason")
+        kind, temperature = "page_reason", "cold"
+    else:
+        kind = matched["id"]
+        temperature = signal_temperature(playbook, matched, age_days=age_days, context_only=context_only)
     return PlaybookDecision(
-        kind=matched["id"],
-        temperature=signal_temperature(playbook, matched, age_days=age_days, context_only=context_only),
-        segment=_segment(playbook, evidence),
-        reason=sentence)
+        kind=kind, temperature=temperature, segment=_segment(playbook, evidence),
+        reason=quotes[0], quotes=quotes)
+
+
+def _matching_signal(playbook: LeadPlaybook, text: str) -> dict | None:
+    return next((item for item in playbook.signals if re.search(item["pattern"], text or "", re.I)), None)
+
+
+def fit_quotes(playbook: LeadPlaybook, text: str) -> tuple[str, ...]:
+    """One or two sentences about what the company sells and to whom.
+
+    A glued menu or a skip-to-content run is not a quote. A missing event
+    date is not a reason to drop the sentence.
+    """
+    found = []
+    for part in re.findall(r"[^.!?]+[.!?]", text or ""):
+        sentence = " ".join(part.split())
+        if not sentence or len(sentence) > 280 or sentence in found:
+            continue
+        if _CHROME_SENTENCE.search(sentence) or _menu_sentence(sentence):
+            continue
+        if not _sells(playbook, sentence):
+            continue
+        if sentence not in " ".join((text or "").split()):
+            continue
+        found.append(sentence)
+        if len(found) == 2:
+            break
+    return tuple(found)
+
+
+def _menu_sentence(sentence: str) -> bool:
+    words = sentence.split()
+    if not words:
+        return True
+    first = words[0].strip(".,;:()[]")
+    if first[:1].isdigit() or first.casefold() in {"com", "www"}:
+        return True
+    caps = sum(1 for word in words if word[:1].isupper())
+    return len(words) > 8 and caps / len(words) > 0.72
+
+
+_CHROME_SENTENCE = re.compile(
+    r"\b(?:skip to content|toggle navigation|all rights reserved|cookie policy|privacy policy|accept cookies)\b",
+    re.I,
+)
+
+
+def _sells(playbook: LeadPlaybook, sentence: str) -> bool:
+    folded = sentence.casefold()
+    for sub in playbook.subsegments:
+        for term in sub["terms"]:
+            if term.casefold() in folded:
+                return True
+    if re.search(r"\bfor b2b\b|\bb2b (?:companies|teams|clients|customers|businesses)\b", sentence, re.I):
+        return True
+    if re.search(r"\b(?:clients include|case study)\b", sentence, re.I) and re.search(r"\bb2b\b", sentence, re.I):
+        return True
+    floor = playbook.minimum_usd_per_year * 100
+    return any(amount >= floor for amount in annual_price_cents(sentence))
 
 
 def _exclusion(playbook: LeadPlaybook, rule: dict, evidence: str, domain: str) -> str:
@@ -325,6 +393,11 @@ def _load(path: Path) -> LeadPlaybook:
     for sub in subsegments:
         if not sub.get("id") or not sub.get("title") or not sub.get("terms"):
             raise RuntimeError(f"{path.name} subsegment")
+        status = sub.get("status") or "active"
+        if status not in {"active", "needs_research"}:
+            raise RuntimeError(f"{path.name} subsegment status")
+        if status == "needs_research" and "needs_research" not in (sub.get("why") or ""):
+            raise RuntimeError(f"{path.name} subsegment needs_research")
         for query in sub["queries"]:
             _check_query(path.name, query)
             queries.append(query)

@@ -72,6 +72,9 @@ class ExtractedPage:
     h1: str = ""
     navigation: str = ""
     address_country: str = ""
+    people: tuple[tuple[str, str], ...] = ()
+    emails: tuple[str, ...] = ()
+    forms: tuple[tuple[str, tuple[str, ...]], ...] = ()
 
     @property
     def content_sha256(self) -> str:
@@ -132,6 +135,9 @@ class _MainContentParser(HTMLParser):
         self._in_title = False
         self._in_h1 = False
         self._capture_ld = False
+        self._open_form: dict | None = None
+        self.forms: list[dict] = []
+        self.mailtos: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         lowered = tag.lower()
@@ -140,6 +146,17 @@ class _MainContentParser(HTMLParser):
             self.language = (attr.get("lang") or "").strip()
         if lowered == "script" and "ld+json" in attr.get("type", "").casefold():
             self._capture_ld = True
+        if lowered == "form":
+            self._open_form = {"action": attr.get("action", "").strip(), "fields": []}
+        if self._open_form is not None and lowered in {"input", "textarea", "select"}:
+            field = (attr.get("name") or attr.get("aria-label") or attr.get("placeholder") or attr.get("type") or "").strip()
+            if field and field.casefold() not in {"hidden", "submit", "button", "image"}:
+                self._open_form["fields"].append(field)
+        href = attr.get("href", "").strip()
+        if lowered == "a" and href.casefold().startswith("mailto:"):
+            address = href.split(":", 1)[1].split("?", 1)[0].strip()
+            if address:
+                self.mailtos.append(address)
         if lowered == "h1":
             self._in_h1 = True
         if _navigation(attrs) or lowered == "nav":
@@ -163,6 +180,11 @@ class _MainContentParser(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         lowered = tag.lower()
+        if lowered == "form" and self._open_form is not None:
+            form = self._open_form
+            self._open_form = None
+            if form["fields"]:
+                self.forms.append(form)
         if lowered == "script":
             if self._ld_chunks:
                 self._scripts.append("".join(self._ld_chunks))
@@ -253,6 +275,16 @@ def extract_html(source_url: str, html: str, *, content_type: str = "text/html")
             canonical = joined
     fragment = relevant_fragment(text)
     fragments = (fragment,) if fragment else ()
+    country, people, ld_emails = _structured(parser._scripts)
+    emails = []
+    seen = set()
+    for raw in (*parser.mailtos, *ld_emails, *_EMAIL.findall(text)):
+        address = raw.strip().strip(".").casefold()
+        if address in seen or not _EMAIL.fullmatch(address):
+            continue
+        seen.add(address)
+        emails.append(address)
+    forms = tuple((item["action"], tuple(item["fields"])) for item in parser.forms)
     return ExtractedPage(
         source_url=source_url,
         canonical_url=canonical,
@@ -266,21 +298,41 @@ def extract_html(source_url: str, html: str, *, content_type: str = "text/html")
         description=parser.description,
         h1=parser.h1,
         navigation=parser.navigation,
-        address_country=_address_country(parser._scripts),
+        address_country=country,
+        people=tuple(people),
+        emails=tuple(emails),
+        forms=forms,
     )
 
 
-def _address_country(scripts: list[str]) -> str:
-    found: list[str] = []
+_EMAIL = re.compile(r"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+")
+
+
+def _structured(scripts: list[str]) -> tuple[str, list[tuple[str, str]], list[str]]:
+    country = ""
+    people: list[tuple[str, str]] = []
+    emails: list[str] = []
 
     def walk(node) -> None:
+        nonlocal country
         if isinstance(node, dict):
+            types = node.get("@type") or ""
+            if isinstance(types, list):
+                types = " ".join(str(item) for item in types)
+            if "Person" in str(types):
+                name = node.get("name") if isinstance(node.get("name"), str) else ""
+                title = node.get("jobTitle") if isinstance(node.get("jobTitle"), str) else ""
+                if name.strip() and title.strip():
+                    people.append((name.strip(), title.strip()))
+            raw_email = node.get("email")
+            if isinstance(raw_email, str) and raw_email.strip():
+                emails.append(raw_email.strip().removeprefix("mailto:"))
             for key, value in node.items():
-                if key == "addressCountry":
-                    if isinstance(value, str):
-                        found.append(value.strip())
+                if key == "addressCountry" and not country:
+                    if isinstance(value, str) and value.strip():
+                        country = value.strip()
                     elif isinstance(value, dict):
-                        found.append(str(value.get("name") or value.get("@id") or "").strip())
+                        country = str(value.get("name") or value.get("@id") or "").strip()
                 else:
                     walk(value)
         elif isinstance(node, list):
@@ -292,7 +344,7 @@ def _address_country(scripts: list[str]) -> str:
             walk(json.loads(raw))
         except ValueError:
             continue
-    return next((item for item in found if item), "")
+    return country, people, emails
 
 
 def content_sha256(text: str) -> str:

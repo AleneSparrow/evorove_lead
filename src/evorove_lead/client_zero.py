@@ -250,8 +250,10 @@ def run_source_dry_run(*, collect_only=False, analyze_only=False, plan_only=Fals
         http = PublicSourceHTTP(max_requests=int(os.getenv('SOURCE_MAX_REQUESTS','40')))
         search = None
         if any(item.source_id == 'searxng_web' for item in plan.selected):
-            from evorove_lead.web_search import client_from_env
+            from evorove_lead.web_search import client_from_env, configure_playbook_search
             search = client_from_env()
+            if playbook is not None:
+                configure_playbook_search(search)
         reader = (lambda pages, book=playbook: find_company_page_signal(book, pages)) if playbook else None
         collector = SourceCollector(engine, http, ttl_days=int(os.getenv('SOURCE_SITE_TTL_DAYS','7')), page_signals=reader)
         adapters = adapters_for_plan(plan, http, search)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Protocol, Sequence
 from urllib.error import HTTPError, URLError
@@ -55,7 +56,8 @@ def _validate_configured_base_url(url: str) -> str:
     if not parsed.hostname:
         raise PresenceRejected("search base URL must have a host")
     return raw
-MAX_RESULTS_PER_QUERY = 5
+MAX_RESULTS_PER_PAGE = 10
+MAX_RESULTS_PER_QUERY = 30
 
 
 @dataclass(frozen=True)
@@ -93,7 +95,7 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
     for item in payload["results"]:
         if not isinstance(item, dict) or not isinstance(item.get("url"), str) or not item["url"].strip() or not isinstance(item.get("content", ""), str):
             raise SearchError("search_invalid_structure")
-        if len(hits) < MAX_RESULTS_PER_QUERY:
+        if len(hits) < MAX_RESULTS_PER_PAGE:
             published = item.get("publishedDate") or item.get("published") or ""
             title = item.get("title") or ""
             engine = item.get("engine") or ""
@@ -114,12 +116,14 @@ def _parse_results(body: bytes) -> tuple[SearchHit, ...]:
 
 class HttpSearxngWebSearchClient:
     """One HTTP attempt per page. BudgetedSearch alone owns transient retries."""
-    def __init__(self, base_url: str, opener=None, *, max_pages: int = 1, max_requests=30):
+    def __init__(self, base_url: str, opener=None, *, max_pages: int = 1, max_requests=30, pause_seconds: float = 0):
         self._base_url = _validate_configured_base_url(base_url).rstrip("/")
         self._opener = opener or urlopen
         self._max_pages = max(1, max_pages)
+        self.pause_seconds = max(0.0, pause_seconds)
         self.max_requests, self.requests = max_requests, 0
         self._cache = {}
+        self.query_counts: dict[str, int] = {}
 
     def search(self, query: str) -> Sequence[SearchHit]:
         key = " ".join((query or "").split())
@@ -127,12 +131,17 @@ class HttpSearxngWebSearchClient:
             return self._cache[key]
         if self.max_requests is not None and self.requests >= self.max_requests:
             if self._max_pages > 1:
+                self.query_counts[key] = 0
                 return ()
             raise SearchError("search_request_limit")
         collected: list[SearchHit] = []
         for page in range(1, self._max_pages + 1):
+            if len(collected) >= MAX_RESULTS_PER_QUERY:
+                break
             if self.max_requests is not None and self.requests >= self.max_requests:
                 break
+            if page > 1 and self.pause_seconds:
+                time.sleep(self.pause_seconds)
             self.requests += 1
             params = {"q": query, "format": "json", "language": "en-US"}
             if page > 1:
@@ -145,9 +154,11 @@ class HttpSearxngWebSearchClient:
             page_hits = _parse_results(body)
             if not page_hits:
                 break
-            collected.extend(page_hits)
+            room = MAX_RESULTS_PER_QUERY - len(collected)
+            collected.extend(page_hits[:room])
         hits = dedupe_hits(collected)
         self._cache[key] = hits
+        self.query_counts[key] = len(hits)
         return hits
 
     def _fetch_body(self, request: Request) -> bytes:
@@ -182,6 +193,22 @@ class HttpSearxngWebSearchClient:
                 except (ValueError, TypeError, OverflowError):
                     pass
         return SearchError(f"search_http_{status}", retryable=status in {429, 500, 502, 503, 504}, retry_after=delay)
+
+
+def configure_playbook_search(client) -> None:
+    """A playbook collect reads two or three result pages, with a pause between them."""
+    if client is None or not hasattr(client, "_max_pages"):
+        return
+    try:
+        pages = int(os.getenv("SEARCH_MAX_PAGES", "3"))
+    except ValueError:
+        pages = 3
+    try:
+        pause = float(os.getenv("SEARCH_PAGE_PAUSE_SECONDS", "0.4"))
+    except ValueError:
+        pause = 0.4
+    client._max_pages = min(3, max(2, pages))
+    client.pause_seconds = max(0.0, pause)
 
 
 def client_from_env(*, required=False) -> WebSearchClient | None:

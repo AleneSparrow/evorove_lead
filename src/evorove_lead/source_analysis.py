@@ -16,6 +16,7 @@ from evorove_lead.lead_playbooks import screen_lead
 from evorove_lead.source_core_models import SourceCompany, SourcePerson, SourceContact, SourceRawPage, SourceSignal
 
 _US = re.compile(r'\b(?:based|headquartered|located|office|address)\b.{0,65}\b(?:US|USA|United States|U\.S\.|San Francisco|New York|California)\b', re.I)
+_FORM = re.compile(r"contact_form (https?://\S+) fields ([A-Za-z0-9_|. -]+)")
 _SOFTWARE = re.compile(r'\b(?:SaaS|software|online business|digital product|web app|platform)\b', re.I)
 _WAREHOUSE_TEMPERATURE = {
     'sales_hiring': ('hot', 'warm'),
@@ -32,6 +33,14 @@ def warehouse_temperature(signal_type: str, *, age_days: int, context_only: bool
     if age_days < 0 or age_days > limit:
         return 'cold'
     return context if context_only else event
+
+def _contact_form(pages) -> str:
+    for page in pages:
+        match = _FORM.search(page.text or "")
+        if match:
+            return match.group(1)
+    return ""
+
 
 def _utc(value):
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
@@ -65,7 +74,7 @@ class SourceAnalyzer:
                 if playbook is None:
                     window = 90 if signal.context_only else 30
                 else:
-                    window = playbook.context_days if signal.context_only else playbook.event_days
+                    window = playbook.context_days
                 if age<timedelta(0) or age>timedelta(days=window):
                     counts['stale_signal']+=1;continue
                 pages=db.scalars(select(SourceRawPage).where(SourceRawPage.business_id==business_id,SourceRawPage.domain==signal.domain)).all()
@@ -75,10 +84,25 @@ class SourceAnalyzer:
                 people=db.scalars(select(SourcePerson).where(SourcePerson.business_id==business_id,SourcePerson.domain==signal.domain,SourcePerson.suppressed.is_(False))).all()
                 people_by_key={p.name_key:p for p in people}
                 contacts=db.scalars(select(SourceContact).where(SourceContact.business_id==business_id,SourceContact.domain==signal.domain,SourceContact.suppressed.is_(False),SourceContact.mx_verified.is_(True))).all()
-                pair=next(((people_by_key[c.name_key],c) for c in contacts if c.name_key in people_by_key and c.email and c.evidence_url in {p.url for p in fresh}),None)
-                if pair is None:
-                    counts['no_verified_email']+=1;continue
-                person,contact=pair
+                page_urls={p.url for p in fresh}
+                if playbook is None:
+                    pair=next(((people_by_key[c.name_key],c) for c in contacts if c.name_key in people_by_key and c.email and c.evidence_url in page_urls),None)
+                    if pair is None:
+                        counts['no_verified_email']+=1;continue
+                    person,contact=pair
+                    contact_channel, contact_value = "email", contact.email
+                else:
+                    person = next(iter(people), None)
+                    if person is None:
+                        counts['no_named_person']+=1;continue
+                    contact = next((c for c in contacts if c.email and c.evidence_url in page_urls), None)
+                    form = _contact_form(fresh)
+                    if contact is not None:
+                        contact_channel, contact_value = "email", contact.email
+                    elif form:
+                        contact, contact_channel, contact_value = None, "form", form
+                    else:
+                        counts['no_contact_path']+=1;continue
                 evidence=' '.join([signal.source_text,*[p.text for p in fresh]])
                 if playbook is not None and signal.signal_type == "competitor":
                     counts['competitor']+=1;continue
@@ -107,26 +131,31 @@ class SourceAnalyzer:
                         counts[decision.rejection]+=1;continue
                     temperature, segment, hypothesis, reason = decision.temperature, decision.segment, playbook.id, decision.reason
                     kind = decision.kind
-                if contact.email.casefold() in seen_emails:
+                if contact_channel == "email" and contact_value.casefold() in seen_emails:
                     counts['duplicate_person']+=1;continue
-                seen_emails.add(contact.email.casefold())
+                if contact_channel == "email":
+                    seen_emails.add(contact_value.casefold())
                 if playbook is None:
                     score={'ask_hn_need':90,'hn_hiring':70,'sales_hiring':70,'show_hn_launch':40}.get(signal.signal_type,30)
                 else:
                     score={'sales_hire':90,'open_sales_role':88,'demand_complaint':84,'new_offer':60,'team_growth':55,'marketing_change':50}.get(kind,30)
                 score+=max(0,30-age.days)
-                ranked.append((score,signal,company,person,contact,max(fresh,key=lambda p:p.fetched_at),temperature,segment,hypothesis,reason,kind))
+                ranked.append((score,signal,company,person,contact,max(fresh,key=lambda p:p.fetched_at),temperature,segment,hypothesis,reason,kind,contact_channel,contact_value,tuple(getattr(decision,'quotes',()) if playbook is not None else ())))
                 counts['rules_passed']+=1
         ranked.sort(key=lambda row:(-row[0],row[1].source_url))
-        for score,signal,company,person,contact,page,temperature,segment,hypothesis,reason,kind in ranked[:self.max_candidates]:
+        for score,signal,company,person,contact,page,temperature,segment,hypothesis,reason,kind,contact_channel,contact_value,quotes in ranked[:self.max_candidates]:
             if playbook is not None:
-                candidate=accept_candidate(identity=contact.email,reason=reason,reason_source=signal.source_url)
-                handoff=Cycle1Handoff.from_candidate(candidate,'email',person_id=stable_person_id(business_id,email=contact.email),hypothesis_id=hypothesis)
+                identity = contact_value if contact_channel == "email" else person.name
+                person_key = stable_person_id(business_id, email=contact_value if contact_channel == "email" else None, identity=person.name)
+                candidate=accept_candidate(identity=identity,reason=reason,reason_source=signal.source_url)
+                handoff=Cycle1Handoff.from_candidate(candidate,contact_channel,person_id=person_key,hypothesis_id=hypothesis)
                 touch=assembled_touch(business_id,candidate,handoff,segment=segment)
                 shown_date = "" if signal.context_only else _utc(signal.signal_date).isoformat()
                 touch['payload'].update(signal_type=signal.signal_type,signal_date=shown_date,
-                    source_url=signal.source_url,quote=signal.quote,reason=reason,evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
-                    source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind)
+                    source_url=signal.source_url,quote=signal.quote,reason=reason,reason_quotes=list(quotes or (reason,)),
+                    evidence_fetched_at=_utc(signal.fetched_at).isoformat(),
+                    source_id=signal.source_id or signal.source,signal_temperature=temperature,detected_signal=kind,
+                    contact_channel=contact_channel,contact_value=contact_value)
                 cold.append(touch);counts['cold_ready']+=1
                 continue
             if self.classifier is None:

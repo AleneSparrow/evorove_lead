@@ -1,7 +1,7 @@
 {
   "id": "evorove_icp",
   "title": "Evorove ICP",
-  "version": "2026-10-25.3",
+  "version": "2026-10-26.1",
   "describes": "lead_segments",
   "lead_summary": "US B2B businesses with high-value deals that want to replace or avoid a sales team. For client 0 these are Evorove's own buyers.",
   "client_note": "A playbook names the leads a client wants found. It does not name the client's own industry. Client 0's leads are the companies that could buy Evorove. The subsegments below are searched together, not queued.",
@@ -14,7 +14,7 @@
       "terms": ["marketing agency", "design agency", "development agency", "automation agency"],
       "queries": [
         "marketing agency for B2B book a call",
-        "design agency case studies United States"
+        "design agency for B2B book a call"
       ]
     },
     {
@@ -22,17 +22,19 @@
       "title": "IT services and cybersecurity",
       "terms": ["managed IT", "cybersecurity", "IT consulting"],
       "queries": [
-        "managed IT services for B2B book a call",
-        "cybersecurity firm case studies United States"
+        "managed IT services provider for mid-size businesses",
+        "cybersecurity firm for B2B book a call"
       ]
     },
     {
       "id": "consulting_training",
+      "status": "needs_research",
+      "why": "needs_research: company-shaped queries still did not put a consulting or training firm into the pages this budget could read. Kept out of collection until a query shows those firms.",
       "title": "Consulting and corporate training",
       "terms": ["management consulting", "corporate training", "leadership training"],
       "queries": [
-        "management consulting for B2B book a call",
-        "corporate training case studies United States"
+        "management consulting firm for B2B book a call",
+        "corporate training company for B2B book a call"
       ]
     },
     {
@@ -40,26 +42,30 @@
       "title": "Recruiting",
       "terms": ["recruiting firm", "staffing agency", "executive search"],
       "queries": [
-        "recruiting firm for B2B book a call",
-        "staffing agency case studies United States"
+        "B2B staffing firm book a call",
+        "executive search firm for B2B request a quote"
       ]
     },
     {
       "id": "b2b_services",
+      "status": "needs_research",
+      "why": "needs_research: distributor and equipment queries still return software about suppliers, not the suppliers. Kept out of collection.",
       "title": "High-ticket B2B services and supply",
       "terms": ["equipment supplier", "logistics company", "wholesale supplier", "equipment distributor"],
       "queries": [
-        "equipment supplier for B2B book a call",
-        "wholesale supplier case studies United States"
+        "industrial distributor request a quote",
+        "equipment distributor for B2B request a quote"
       ]
     },
     {
       "id": "vertical_saas",
+      "status": "needs_research",
+      "why": "needs_research: construction and manufacturing software queries returned results, and none of those companies reached a page read ahead of agencies and IT firms. Kept out of collection until a query ranks an actual software company.",
       "title": "Vertical B2B software",
       "terms": ["construction software", "logistics software", "manufacturing software", "field service software"],
       "queries": [
-        "construction software for B2B book a call",
-        "manufacturing software case studies United States"
+        "construction software for mid-size businesses book a call",
+        "manufacturing software for B2B request a demo"
       ]
     }
   ],
@@ -94,8 +100,8 @@
     },
     {
       "id": "team_growth",
-      "event_temperature": "warm",
-      "context_temperature": "cold",
+      "event_temperature": "hot",
+      "context_temperature": "warm",
       "pattern": "\\b(?:growing (?:the|our) team|team is growing|we are growing|we're growing|new office)\\b|\\badded \\d+ (?:people|employees|hires)\\b",
       "how": "A dated quote says the team is growing, a new office opened, or people were added. Event within 30 days is warm. Context within 90 days is cold."
     },
@@ -108,14 +114,14 @@
     },
     {
       "id": "open_marketing_role",
-      "event_temperature": "warm",
+      "event_temperature": "hot",
       "context_temperature": "cold",
       "pattern": "\\bhiring\\b.{0,60}\\b(?:marketing manager|marketing director|head of marketing|demand generation|content marketer)\\b|\\b(?:open|new)\\s+marketing\\s+(?:role|position)\\b",
       "how": "A quote says a marketing role is open. A date on that sentence or its page is the event. Without a date this is context, and the collection time is not the event date."
     },
     {
       "id": "open_ops_role",
-      "event_temperature": "warm",
+      "event_temperature": "hot",
       "context_temperature": "cold",
       "pattern": "\\bhiring\\b.{0,60}\\b(?:operations manager|head of operations|ops manager|director of operations)\\b|\\b(?:open|new)\\s+(?:operations|ops)\\s+(?:role|position)\\b",
       "how": "A quote says an operations role is open. A date on that sentence or its page is the event. Without a date this is context."
@@ -143,8 +149,8 @@
     },
     {
       "id": "expansion",
-      "event_temperature": "warm",
-      "context_temperature": "cold",
+      "event_temperature": "hot",
+      "context_temperature": "warm",
       "pattern": "\\b(?:we are expanding|we're expanding|expanding our|expansion into|opened a new office)\\b",
       "how": "A quote says the company is expanding or opened an office. A date on the sentence or the page is the event. Without a date this is context."
     }
@@ -191,7 +197,7 @@
     {"id": "trade_press", "status": "needs_research", "why": "needs_research: industry_rss is disabled. A dated article about a new service or a marketing change is not collected."}
   ],
   "touch_angles": [
-    "The Cold reason is one verbatim sentence from the dated quote: a sales hire, an open sales role, a new service, team growth, a public complaint about clients or the cost of a sales team, or a marketing change.",
+    "The Cold reason is one or two verbatim sentences from the company's own page about what it sells and to whom. A dated sales, hiring, or growth event sets the temperature. It is not required for the person to be cold.",
     "A deal-size sign (book a call, custom pricing, a from-price at or above $5000 a year, a case-study phrase, or a team of more than one) can be stated only by copying the page. It is a fit check. It is not a claim that the company asked for Evorove.",
     "The US sentence that placed the company can be copied. A country that was not on the page cannot.",
     "Do not invent a price, a discount, a guarantee, or a legal claim. This repository does not write the letter."

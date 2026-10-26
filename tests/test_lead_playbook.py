@@ -26,7 +26,7 @@ def test_menu_lists_lead_playbooks_not_the_clients_industry():
     menu = niche_menu()
     assert [item["id"] for item in menu] == ["evorove_icp"]
     assert menu[0]["title"] == "Evorove ICP" and menu[0]["describes"] == "lead_segments"
-    assert menu[0]["queries"] == 12
+    assert menu[0]["queries"] == 6
     assert menu[0]["sources_collected"] == ["searxng_web"]
     assert {item["id"] for item in menu[0]["gaps"]} == {"job_board", "public_complaint_forum", "trade_press"}
     try:
@@ -47,13 +47,19 @@ def test_playbook_queries_are_short_and_do_not_say_site():
     for sub in book.subsegments:
         assert sub["queries"]
         seen.extend(sub["queries"])
-    assert len(seen) == 12
+    assert len(seen) == 12 and len(book.queries()) == 6
+    paused = [sub["id"] for sub in book.subsegments if sub.get("status") == "needs_research"]
+    assert paused == ["consulting_training", "b2b_services", "vertical_saas"]
+    assert all("needs_research" in sub["why"] for sub in book.subsegments if sub.get("status") == "needs_research")
+    assert all(query not in book.queries() for sub in book.subsegments if sub.get("status") == "needs_research" for query in sub["queries"])
     forbidden = {"hiring", "jobs", "job", "careers", "career", "site"}
     for query in seen:
         tokens = {token.casefold().strip(".,") for token in query.split()}
         assert not tokens & forbidden and '"' not in query and "?" not in query
         assert len(query) <= 120
-        assert "b2b" in query.casefold() or "case studies" in query.casefold() or "book a call" in query.casefold()
+        folded = query.casefold()
+        assert "case studies" not in folded
+        assert any(part in folded for part in ("book a call", "request a quote", "request a demo", "mid-size", "for b2b"))
 
 
 def test_playbook_replaces_the_model_and_keeps_disabled_sources_out():
@@ -102,7 +108,7 @@ def test_deal_size_and_exclusions_do_not_call_a_model():
     page = " Northwind is a marketing agency based in the United States. Book a call."
     fit = screen_lead(book, evidence=QUOTE + page, domain="northwind.example", quote=QUOTE, age_days=1, context_only=False)
     assert fit.rejection == "" and fit.kind == "sales_hire" and fit.temperature == "hot"
-    assert fit.segment == "Agencies" and fit.reason == QUOTE
+    assert fit.segment == "Agencies" and fit.reason == "Northwind is a marketing agency based in the United States."
     assert screen_lead(book, evidence=QUOTE + " from $99/month. Book a call. Based in the United States.",
         domain="northwind.example", quote=QUOTE, age_days=1, context_only=False).rejection == "low_ticket"
     assert screen_lead(book, evidence=QUOTE + " from $99/month and from $8,000. Book a call.",
@@ -118,20 +124,25 @@ def test_deal_size_and_exclusions_do_not_call_a_model():
     assert screen_lead(book, evidence=QUOTE + " Book a call.", domain="linkedin.com", quote=QUOTE,
         age_days=1, context_only=False).rejection == "social"
     assert screen_lead(book, evidence="We updated the homepage. Book a call.", domain="northwind.example",
-        quote="We updated the homepage.", age_days=1, context_only=False).rejection == "no_playbook_signal"
+        quote="We updated the homepage.", age_days=1, context_only=False).rejection == "no_page_reason"
+    portrait = screen_lead(book, evidence="Northwind is a marketing agency for B2B teams. Book a call.",
+        domain="northwind.example", quote="We updated the homepage.", age_days=1, context_only=True)
+    assert portrait.rejection == "" and portrait.temperature == "cold" and portrait.kind == "page_reason"
     high = screen_lead(book, evidence=QUOTE + " Work starts at $6,000.", domain="northwind.example",
         quote=QUOTE, age_days=1, context_only=False)
     assert high.rejection == "" and high.segment == "Evorove ICP"
 
 
-def _store(engine, *, page, quote=QUOTE, days=1, context_only=False, domain="northwind.example"):
+def _store(engine, *, page, quote=QUOTE, days=1, context_only=False, domain="northwind.example", person=True, contact=True):
     when = NOW - timedelta(days=days)
     with Session(engine) as db, db.begin():
         db.add(SourceCompany(business_id="client-zero", domain=domain, name="Northwind",
             site_url=f"https://{domain}/", collected_at=NOW, expires_at=NOW + timedelta(days=7)))
-        db.add(SourcePerson(business_id="client-zero", domain=domain, name_key="jane doe", name="Jane Doe", role="founder"))
-        db.add(SourceContact(business_id="client-zero", domain=domain, email=f"jane@{domain}", name_key="jane doe",
-            mx_verified=True, evidence_url=f"https://{domain}/"))
+        if person:
+            db.add(SourcePerson(business_id="client-zero", domain=domain, name_key="jane doe", name="Jane Doe", role="founder"))
+        if person and contact:
+            db.add(SourceContact(business_id="client-zero", domain=domain, email=f"jane@{domain}", name_key="jane doe",
+                mx_verified=True, evidence_url=f"https://{domain}/"))
         db.add(SourceRawPage(business_id="client-zero", domain=domain, url=f"https://{domain}/", text=page,
             fetched_at=NOW, expires_at=NOW + timedelta(days=7), sha256="a" * 64))
         db.add(SourceSignal(business_id="client-zero", source_url=f"https://{domain}/news", domain=domain,
@@ -151,7 +162,9 @@ def test_playbook_analysis_emits_temperature_without_a_model():
     assert report["cost_usd"] == 0
     payload = touches[0]["payload"]
     assert payload["signal_temperature"] == "hot" and payload["detected_signal"] == "sales_hire"
-    assert payload["reason"] == QUOTE and payload["segment"] == "Agencies"
+    assert payload["reason"] == "Northwind is a marketing agency based in the United States."
+    assert payload["segment"] == "Agencies"
+    assert payload["contact_channel"] == "email" and payload["contact_value"] == "jane@northwind.example"
     assert payload["hypothesis_id"] == "evorove_icp" and payload["source_id"] == "searxng_web"
 
 
@@ -169,7 +182,7 @@ def test_playbook_analysis_rejects_low_ticket_regulated_and_stale():
     assert touches == () and report["rejections"] == {"regulated": 1}
     engine = create_engine("sqlite://")
     Base.metadata.create_all(engine)
-    _store(engine, page="Northwind is a marketing agency based in the United States. Book a call.", days=31)
+    _store(engine, page="Northwind is a marketing agency based in the United States. Book a call.", days=100)
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=book).run("client-zero")
     assert touches == () and report["rejections"] == {"stale_signal": 1}
 
@@ -330,11 +343,11 @@ def test_crawl_order_prefers_a_company_title_over_an_aggregator(monkeypatch):
     assert [item.site_url for item in found] == [
         "https://elevationb2b.com/",
         "https://notes.example/",
-        "https://lists.example/",
     ]
     report = UniversalWebFallback(None, Search(), ("marketing agency for B2B book a call",), terms=("marketing agency",))
     report.fetch()
-    assert report.dropped["competitor"] == 1
+    assert report.dropped["list_page"] == 1 and report.dropped["competitor"] == 1
+    assert report.query_results == [{"query": "marketing agency for B2B book a call", "results": 4}]
 
 
 def test_page_date_is_kept_and_a_missing_date_stays_context():
@@ -360,3 +373,113 @@ def test_needs_review_does_not_become_cold():
     _store(engine, page="We are hiring an SDR. Book a call. Plans cost $8000 a year.")
     report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
     assert touches == () and report["rejections"] == {"needs_review": 1}
+
+
+def test_a_portrait_without_an_event_is_cold_and_a_missing_person_or_path_is_not():
+    page = "Northwind is a marketing agency based in the United States. Book a call."
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    _store(engine, page=page, quote="We updated the homepage.", context_only=True)
+    report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
+    assert report["cold_ready"] == 1 and touches[0]["payload"]["signal_temperature"] == "cold"
+    assert touches[0]["payload"]["detected_signal"] == "page_reason"
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    _store(engine, page=page + " contact_form https://northwind.example/contact fields name|email|message",
+        quote="We updated the homepage.", context_only=True, contact=False)
+    report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
+    assert touches[0]["payload"]["contact_channel"] == "form"
+    assert touches[0]["payload"]["contact_value"] == "https://northwind.example/contact"
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    _store(engine, page=page, person=False, contact=False)
+    report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
+    assert touches == () and report["rejections"] == {"no_named_person": 1}
+    engine = create_engine("sqlite://")
+    Base.metadata.create_all(engine)
+    _store(engine, page=page, contact=False)
+    report, touches = SourceAnalyzer(engine, clock=lambda: NOW, playbook=_book()).run("client-zero")
+    assert touches == () and report["rejections"] == {"no_contact_path": 1}
+
+
+def test_saved_list_page_yields_names_and_domains_without_the_description():
+    from pathlib import Path
+    from evorove_lead.list_pages import companies_from_list_html, is_list_page
+    html = (Path(__file__).parent / "fixtures" / "top_agencies_list.html").read_text()
+    assert is_list_page("10 Best marketing agencies", "A roundup")
+    found = companies_from_list_html(html, "https://lists.example/best", limit=12)
+    assert found == (
+        ("Elevation B2B", "https://elevationb2b.com/work"),
+        ("Northwind Studio", "https://northwind.example/"),
+    )
+    assert all("manufacturers" not in name for name, _url in found)
+    assert len(companies_from_list_html(html, "https://lists.example/best", limit=1)) == 1
+
+
+def test_leader_email_and_form_come_from_the_page_markup():
+    from evorove_lead.decision_maker import find_named_leader
+    from evorove_lead.page_extract import extract_html
+    from evorove_lead.source_collection import classify_fetch_error, is_challenge_page
+    from http.client import RemoteDisconnected
+    from urllib.error import HTTPError
+    html = """<html><head>
+    <script type="application/ld+json">{"@type":"Person","name":"Maria Alvarez","jobTitle":"Founder","email":"maria@northwind.example"}</script>
+    </head><body>
+    <a href="mailto:hello@northwind.example">hello</a>
+    <form action="/contact"><input name="email"><textarea name="message"></textarea></form>
+    </body></html>"""
+    page = extract_html("https://northwind.example/about", html)
+    assert ("Maria Alvarez", "Founder") in page.people
+    assert "maria@northwind.example" in page.emails and "hello@northwind.example" in page.emails
+    assert page.forms[0][0] == "/contact" and page.forms[0][1] == ("email", "message")
+    from evorove_lead.source_collection import contact_form_target
+    assert contact_form_target(page.forms, "https://northwind.example/about")[0] == "https://northwind.example/contact"
+    assert contact_form_target((("https://example.com/search", ("q",)),), "https://example.com/") == ("", "")
+    found = find_named_leader((("https://northwind.example/about", page.text, page.people),))
+    assert found[:2] == ("Maria Alvarez", "Founder")
+    text = find_named_leader((("https://northwind.example/team", "Jane Doe is the managing director.", ()),))
+    assert text[0] == "Jane Doe" and text[1].casefold() == "managing director"
+    glued = find_named_leader((("https://northwind.example/about", "Case Study Jon Corrin is the CEO.", ()),))
+    assert glued[0] == "Jon Corrin"
+    assert find_named_leader((("https://northwind.example/about", "Professional Services Built is the owner.", ()),)) is None
+    assert find_named_leader((("https://northwind.example/", "Imagine starting a new job with no guidance.", ()),)) is None
+    from evorove_lead.lead_playbooks import fit_quotes
+    assert fit_quotes(_book(), "3055 Contact Sales Enterprise Managed IT services for mid-size businesses nationwide.") == ()
+    assert fit_quotes(_book(), "Northwind is a marketing agency for B2B teams.") == ("Northwind is a marketing agency for B2B teams.",)
+    assert classify_fetch_error(HTTPError("https://example.com/", 403, "no", {}, None)) == "blocked_403"
+    assert classify_fetch_error(RemoteDisconnected("Remote end closed connection without response")) == "blocked_connection"
+    assert is_challenge_page("Client Challenge", "")
+    assert not is_challenge_page("LarchGrid", "Managed IT for B2B companies in Ohio.")
+
+
+def test_playbook_search_keeps_thirty_results_across_three_pages():
+    import json
+    from evorove_lead.web_search import HttpSearxngWebSearchClient, configure_playbook_search
+
+    def opener(request, timeout=None):
+        page = "1"
+        if "pageno=2" in request.full_url:
+            page = "2"
+        elif "pageno=3" in request.full_url:
+            page = "3"
+        results = [{"url": f"https://firm{page}-{i}.example/", "content": "A marketing agency for B2B teams.", "title": "Agency"} for i in range(12)]
+        body = json.dumps({"results": results}).encode()
+
+        class Response:
+            def read(self, n=-1):
+                return body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+        return Response()
+
+    client = HttpSearxngWebSearchClient("http://127.0.0.1:8080", opener=opener, max_pages=3, max_requests=10, pause_seconds=0)
+    hits = client.search("marketing agency for B2B book a call")
+    assert len(hits) == 30 and client.requests == 3
+    assert client.query_counts["marketing agency for B2B book a call"] == 30
+    configure_playbook_search(client)
+    assert client._max_pages == 3 and client.pause_seconds == 0.4

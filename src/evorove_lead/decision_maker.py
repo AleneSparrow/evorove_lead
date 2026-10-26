@@ -20,7 +20,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from typing import Callable, Sequence
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlsplit
 
 from evorove_lead.crm_touch import EMAIL_RE
 from evorove_lead.platforms import registrable_domain
@@ -120,6 +120,85 @@ def _candidate_urls(company_url: str) -> tuple[str, ...]:
         seen.add(url)
         unique.append(url)
     return tuple(unique)
+
+
+_LEADER_RE = re.compile(
+    r"\b(co-founder|cofounder|founder|co-owner|owner|ceo|president|managing director)\b",
+    re.IGNORECASE,
+)
+_LEADER_PATHS = ("about", "team", "leadership", "contact")
+_NOT_NAME = frozenset(
+    "case study professional services built strategy contact support client sales about our team "
+    "national managed solution insights latest how what why your next career search group digital "
+    "product firm agency marketing design service help desk enterprise view speak advisor".split()
+)
+
+
+def find_named_leader(pages: Sequence) -> tuple[str, str, str] | None:
+    """(name, role, url) from JSON-LD Person or a leader role beside a name.
+
+    An email is not required. Pages named About, Team, Leadership, or Contact
+    are read before the homepage.
+    """
+    ordered = sorted(pages, key=lambda item: _leader_rank(item[0]))
+    for item in ordered:
+        url = item[0]
+        people = item[2] if len(item) > 2 else ()
+        for name, role in people:
+            role_match = _LEADER_RE.search(role or "")
+            cleaned = _clean_name(name or "")
+            if role_match and cleaned:
+                return cleaned, role_match.group(0), url
+    for item in ordered:
+        found = _find_leader_in_text(item[1] or "")
+        if found is not None:
+            name, role = found
+            return name, role, item[0]
+    return None
+
+
+def _leader_rank(url: str) -> int:
+    path = urlsplit(url).path.casefold()
+    for index, name in enumerate(_LEADER_PATHS):
+        if re.search(rf"(?:^|/){re.escape(name)}(?:/|$)", path):
+            return index
+    return len(_LEADER_PATHS)
+
+
+def _clean_name(raw: str) -> str:
+    words = raw.split()
+    while words and _edge_word(words[0]):
+        words.pop(0)
+    while words and _edge_word(words[-1]):
+        words.pop()
+    if len(words) < 2 or any(word.casefold() in _NOT_NAME for word in words):
+        return ""
+    name = " ".join(words[:3])
+    if name.casefold() in _NAME_STOPWORDS or not _NAME_RE.fullmatch(name):
+        return ""
+    return name
+
+
+def _edge_word(word: str) -> bool:
+    folded = word.casefold()
+    return folded in _NAME_LEADING_STOPWORDS or folded in _NOT_NAME or bool(_LEADER_RE.fullmatch(word) or _ROLE_RE.fullmatch(word))
+
+
+def _find_leader_in_text(text: str) -> tuple[str, str] | None:
+    for raw_sentence in text.split("."):
+        sentence = raw_sentence.strip()
+        if not sentence or len(sentence) > 280:
+            continue
+        role_match = _LEADER_RE.search(sentence)
+        if role_match is None:
+            continue
+        tokens = re.findall(r"\b[A-Z][a-z]+\b", sentence)
+        for size in (2, 3):
+            for index in range(0, len(tokens) - size + 1):
+                name = _clean_name(" ".join(tokens[index:index + size]))
+                if name:
+                    return name, role_match.group(0)
+    return None
 
 
 def _find_named_role(text: str) -> tuple[str, str, str] | None:
