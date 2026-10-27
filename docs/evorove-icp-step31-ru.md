@@ -61,27 +61,9 @@ Fit 0–50: B2B-услуга или B2B-софт 18 (вместе не скла�
 
 Плейбук: `a2d1bbcbfbf021043ae47f5a30d9101fdf2cb99dbe49aa805e177af6bd593590`.
 
-## Команды
+## Исторические команды
 
-Без ключа, только чтение сохранённых строк и разбор уже известного файла тикеров не повторяется:
-
-```
-cd /Users/alenakulish/.codex/worktrees/cycle1-research-integration/evorove_lead
-env -u DATABASE_URL -u DATABASE_PUBLIC_URL -u SOURCE_DATABASE_URL -u ANTHROPIC_API_KEY \
-  PYTHONPATH=src /Users/alenakulish/dev/evorove_lead/.venv/bin/python -m evorove_lead.qualification_check \
-  --database-url 'postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_s12_dryrun' \
-  --skip-sec
-```
-
-Отдельная платная команда. Агент её не запускал. Ключ подставляет владелец в своём терминале. Модель `claude-haiku-5-5`, effort low, не больше 300 токенов, один вызов на компанию, кэш по хешу текста, потолок $0.50:
-
-```
-cd /Users/alenakulish/.codex/worktrees/cycle1-research-integration/evorove_lead
-env -u DATABASE_URL -u DATABASE_PUBLIC_URL -u SOURCE_DATABASE_URL \
-  QUALIFICATION_EXTRACT_MAX_USD=0.50 \
-  PYTHONPATH=src /Users/alenakulish/dev/evorove_lead/.venv/bin/python -m evorove_lead.field_extraction \
-  --database-url 'postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_s12_dryrun' \
-  --limit 50
-```
-
-В этой базе страницы есть у 6 доменов. Лимит 50 их не умножает.
+Ручные CLI для оценки сохранённых компаний и платного извлечения полей
+удалены из текущей ветки после аудита мёртвого кода. Числа и выводы выше
+относятся только к выполненному тогда эксперименту и не описывают рабочий
+путь цикла 1. Исходный код и команды доступны в истории Git этого документа.
