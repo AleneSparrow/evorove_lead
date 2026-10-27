@@ -5,13 +5,13 @@ from evorove_lead import Candidate, CandidateRejected, accept_candidate
 
 def test_accepts_identity_reason_and_source() -> None:
     candidate = accept_candidate(
-        identity="Jordan Lee, owner@example-bakery.com",
+        identity="Jordan Lee, owner@bakery.example",
         reason="Runs a neighborhood bakery that already advertises weekend catering.",
         reason_source="owner-materials/service-description.txt: weekend catering for local events",
     )
 
     assert candidate == Candidate(
-        identity="Jordan Lee, owner@example-bakery.com",
+        identity="Jordan Lee, owner@bakery.example",
         reason="Runs a neighborhood bakery that already advertises weekend catering.",
         reason_source="owner-materials/service-description.txt: weekend catering for local events",
     )

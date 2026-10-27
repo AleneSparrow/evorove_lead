@@ -49,7 +49,7 @@ def test_legacy_reason_without_evidence_cannot_enter_cold() -> None:
     search = FakePeopleSearch(
         (
             PeopleHit(
-                identity="Jordan Lee, jordan@example-bakery.com",
+                identity="Jordan Lee, jordan@bakery.example",
                 observed_fact="Already advertises weekend catering to nearby families.",
                 observed_source="https://directory.example/jordan",
                 channel="email",
@@ -145,7 +145,7 @@ def test_owner_observations_require_evidence_even_with_reason(
         "\n".join(
             [
                 (
-                    '{"name":"Jordan Lee","email":"jordan@example-bakery.com",'
+                    '{"name":"Jordan Lee","email":"jordan@bakery.example",'
                     '"observed_fact":"Already advertises weekend catering to nearby families.",'
                     '"observed_source":"owner-copied public post, 2026-09-01",'
                     '"channel":"email"}'
@@ -173,7 +173,7 @@ def test_owner_observations_require_evidence_even_with_reason(
     assert result.status is GenerationStatus.NO_FIT
     assert result.sent_messages == ()
     assert result.candidates == () and result.handoffs == ()
-    assert [hit.identity for hit in result.rejected] == ["Jordan Lee, jordan@example-bakery.com", "Pat Dump, +15550100999"]
+    assert [hit.identity for hit in result.rejected] == ["Jordan Lee, jordan@bakery.example", "Pat Dump, +15550100999"]
     assert result.rejected[0].why == "missing_verified_evidence"
 
 
@@ -197,13 +197,13 @@ def test_legacy_email_and_blank_reason_both_stay_out_of_cold() -> None:
     search = FakePeopleSearch(
         (
             PeopleHit(
-                identity="Jordan Lee, jordan@example-bakery.com",
+                identity="Jordan Lee, jordan@bakery.example",
                 observed_fact="Already advertises weekend catering to nearby families.",
                 observed_source="https://directory.example/jordan",
                 channel="email",
             ),
             PeopleHit(
-                identity="pat@example-bakery.com",
+                identity="pat@bakery.example",
                 observed_fact="   ",
                 observed_source="https://directory.example/pat",
                 channel="email",
@@ -230,7 +230,7 @@ def test_engine_does_not_publish_unverified_legacy_people() -> None:
     search = FakePeopleSearch(
         (
             PeopleHit(
-                identity="Jordan Lee, jordan@example-bakery.com",
+                identity="Jordan Lee, jordan@bakery.example",
                 observed_fact="Already advertises weekend catering to nearby families.",
                 observed_source="https://directory.example/jordan",
                 channel="email",
@@ -276,7 +276,7 @@ def test_engine_writes_traces_and_rejections_to_its_own_warehouse_not_crm() -> N
     search = FakePeopleSearch(
         (
             PeopleHit(
-                identity="Jordan Lee, jordan@example-bakery.com",
+                identity="Jordan Lee, jordan@bakery.example",
                 observed_fact="Already advertises weekend catering to nearby families.",
                 observed_source="https://directory.example/jordan",
                 channel="email",
@@ -317,7 +317,7 @@ def test_engine_without_business_id_writes_nothing_to_warehouse() -> None:
     search = FakePeopleSearch(
         (
             PeopleHit(
-                identity="Jordan Lee, jordan@example-bakery.com",
+                identity="Jordan Lee, jordan@bakery.example",
                 observed_fact="Already advertises weekend catering to nearby families.",
                 observed_source="https://directory.example/jordan",
                 channel="email",
@@ -367,7 +367,7 @@ def test_legacy_hypothesis_pipeline_preserves_traces_but_requires_evidence() -> 
                     query_used=hypothesis.query_template,
                     source_channel=hypothesis.channel,
                     hit=PeopleHit(
-                        identity="jordan@example-bakery.com",
+                        identity="jordan@bakery.example",
                         observed_fact="Publicly asked for weekend catering for a birthday.",
                         observed_source="https://forum.example/thread/1",
                         channel="email",
@@ -443,7 +443,7 @@ def test_engine_runs_an_extra_hypothesis_alongside_the_built_set() -> None:
                     query_used=hypothesis.query_template,
                     source_channel=hypothesis.channel,
                     hit=PeopleHit(
-                        identity="planner@example-events.com",
+                        identity="planner@events.example",
                         observed_fact="Needs weekend catering for busy parents' events after a venue closure.",
                         observed_source="https://industry-news.example/thread",
                         channel="email",
@@ -462,7 +462,7 @@ def test_engine_runs_an_extra_hypothesis_alongside_the_built_set() -> None:
     ).generate(seed, extra_hypotheses=(signal_hypothesis,))
 
     assert result.status is GenerationStatus.NO_FIT
-    assert any(c.identity == "planner@example-events.com" for c in result.rejected)
+    assert any(c.identity == "planner@events.example" for c in result.rejected)
     assert result.handoffs == ()
     kinds = {h.intent_trigger for h in warehouse.hypotheses}
     assert any(k == "market_signal" for k in kinds)
@@ -488,7 +488,7 @@ def test_unverified_hypothesis_candidate_keeps_attribution_without_handoff() -> 
                     query_used=hypothesis.query_template,
                     source_channel=hypothesis.channel,
                     hit=PeopleHit(
-                        identity="jordan@example-bakery.com",
+                        identity="jordan@bakery.example",
                         observed_fact="Publicly asked for weekend catering for a birthday.",
                         observed_source="https://forum.example/thread/1",
                         channel="email",

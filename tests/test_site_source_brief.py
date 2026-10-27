@@ -54,7 +54,7 @@ def test_evorove_site_yields_a_brief_without_service_file(monkeypatch, tmp_path)
 
 def test_structurally_different_local_business_uses_its_own_offer_and_geo(tmp_path, monkeypatch):
     monkeypatch.setattr(client_zero, "OWNER_MATERIALS_DIR", tmp_path)
-    site = "https://example-bakery.com"
+    site = "https://bakery.example"
     html = """<html><head><title>Oak Bakery</title></head><body>
     <h1>Fresh bread for Austin neighbors</h1>
     <p>We bake sourdough bread and custom cakes for local events.</p>

@@ -8,7 +8,7 @@ from evorove_lead.crm_touch import RecordingLeadTouchSink
 
 BRIEF = "Weekend catering for local events\n\nWe cook for busy parents in town.\n"
 PEOPLE = (
-    '{"name":"Jordan Lee","email":"jordan@example-bakery.com",'
+    '{"name":"Jordan Lee","email":"jordan@bakery.example",'
     '"observed_fact":"Already advertises weekend catering to nearby families.",'
     '"observed_source":"owner-copied public post, 2026-09-01","channel":"email"}\n'
     '{"name":"Pat Dump","phone":"+15550100999","observed_fact":"Has a phone number in a purchased list.",'

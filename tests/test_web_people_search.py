@@ -213,20 +213,20 @@ def test_business_listing_traces_every_hit_including_a_dropped_directory():
     hypothesis = _business_hypothesis()
     client = FakeClient(
         (
-            SearchHit(url="https://www.tonys-pizza.com/", snippet="Tony's restaurant in Austin"),
+            SearchHit(url="https://www.tonys-pizza.example/", snippet="Tony's restaurant in Austin"),
             SearchHit(url="https://www.yelp.com/biz/tonys", snippet="Best restaurants in Austin"),
         )
     )
     connector = WebSearchPeopleSearch(
         client,
-        page_fetcher=_fetcher({"https://www.tonys-pizza.com/": "Tony's. Contact: hello@tonys-pizza.com"}),
+        page_fetcher=_fetcher({"https://www.tonys-pizza.example/": "Tony's. Contact: hello@tonys-pizza.example"}),
     )
 
     findings = connector.find(hypothesis)
 
     assert len(findings) == 2
     assert findings[0].hit is not None
-    assert findings[0].hit.identity == "hello@tonys-pizza.com"
+    assert findings[0].hit.identity == "hello@tonys-pizza.example"
     assert findings[0].hit.source_kind == "business"
     assert findings[1].hit is None
     assert findings[1].reject_reason == "not the company's own website"
@@ -236,22 +236,22 @@ def test_business_listing_traces_a_repeat_domain_without_fetching_it_twice():
     hypothesis = _business_hypothesis()
     client = FakeClient(
         (
-            SearchHit(url="https://www.tonys-pizza.com/", snippet="Restaurants in Austin"),
-            SearchHit(url="https://www.tonys-pizza.com/menu", snippet="Austin restaurants menu"),
+            SearchHit(url="https://www.tonys-pizza.example/", snippet="Restaurants in Austin"),
+            SearchHit(url="https://www.tonys-pizza.example/menu", snippet="Austin restaurants menu"),
         )
     )
     fetch_calls = []
 
     def fetch(url: str) -> str:
         fetch_calls.append(url)
-        return "hello@tonys-pizza.com"
+        return "hello@tonys-pizza.example"
 
     connector = WebSearchPeopleSearch(client, page_fetcher=fetch)
 
     findings = connector.find(hypothesis)
 
     assert len(findings) == 2
-    assert "https://www.tonys-pizza.com/menu" not in fetch_calls
+    assert "https://www.tonys-pizza.example/menu" not in fetch_calls
     assert findings[1].hit is None
     assert findings[1].reject_reason == "same company already found in this search"
 
@@ -259,21 +259,21 @@ def test_business_listing_traces_a_repeat_domain_without_fetching_it_twice():
 def test_business_listing_uses_the_llm_fallback_when_the_heuristic_finds_no_one():
     hypothesis = _business_hypothesis()
     client = FakeClient(
-        (SearchHit(url="https://www.tonys-pizza.com/", snippet="Restaurants in Austin"),)
+        (SearchHit(url="https://www.tonys-pizza.example/", snippet="Restaurants in Austin"),)
     )
     page_text = (
         "Tony's Pizza. Restaurants in Austin since 1994, run by Jane. "
-        "Questions? jane@tonys-pizza.com"
+        "Questions? jane@tonys-pizza.example"
     )
     connector = WebSearchPeopleSearch(
         client,
-        page_fetcher=_fetcher({"https://www.tonys-pizza.com/": page_text}),
+        page_fetcher=_fetcher({"https://www.tonys-pizza.example/": page_text}),
         decision_maker_llm=ScriptedDecisionMakerCompletion(
             json.dumps(
                 {
                     "name": "Jane Doe",
                     "role": "Owner",
-                    "email": "jane@tonys-pizza.com",
+                    "email": "jane@tonys-pizza.example",
                     "evidence_quote": "Restaurants in Austin since 1994, run by Jane.",
                 }
             )
@@ -284,18 +284,18 @@ def test_business_listing_uses_the_llm_fallback_when_the_heuristic_finds_no_one(
 
     assert len(findings) == 1
     assert findings[0].hit is not None
-    assert findings[0].hit.identity == "jane@tonys-pizza.com"
+    assert findings[0].hit.identity == "jane@tonys-pizza.example"
 
 
 def test_business_listing_drops_the_page_when_the_llm_finds_no_one():
     hypothesis = _business_hypothesis()
     client = FakeClient(
-        (SearchHit(url="https://www.tonys-pizza.com/", snippet="Restaurants in Austin"),)
+        (SearchHit(url="https://www.tonys-pizza.example/", snippet="Restaurants in Austin"),)
     )
-    page_text = "Tony's Pizza. Restaurants in Austin since 1994. Questions? hello@tonys-pizza.com"
+    page_text = "Tony's Pizza. Restaurants in Austin since 1994. Questions? hello@tonys-pizza.example"
     connector = WebSearchPeopleSearch(
         client,
-        page_fetcher=_fetcher({"https://www.tonys-pizza.com/": page_text}),
+        page_fetcher=_fetcher({"https://www.tonys-pizza.example/": page_text}),
         decision_maker_llm=ScriptedDecisionMakerCompletion(
             json.dumps({"name": None, "role": None, "email": None, "evidence_quote": None})
         ),

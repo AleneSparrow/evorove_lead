@@ -129,13 +129,13 @@ def test_candidate_reason_must_tie_to_offer(tmp_path: Path) -> None:
     )
 
     accepted = accept_candidate_for_offer(
-        identity="Jordan Lee, owner@example-bakery.com",
+        identity="Jordan Lee, owner@bakery.example",
         reason="Already advertises weekend catering to nearby families.",
         reason_source="ad-copy.txt",
         offer=offer,
     )
     assert accepted == Candidate(
-        identity="Jordan Lee, owner@example-bakery.com",
+        identity="Jordan Lee, owner@bakery.example",
         reason="Already advertises weekend catering to nearby families.",
         reason_source="ad-copy.txt",
     )
@@ -212,7 +212,7 @@ def test_candidate_reason_need_not_quote_the_offer_verbatim(tmp_path: Path) -> N
     )
 
     accepted = accept_candidate_for_offer(
-        identity="Jordan Lee, owner@example-bakery.com",
+        identity="Jordan Lee, owner@bakery.example",
         reason="Posted looking for a caterer for their kid's weekend birthday party.",
         reason_source="community-board.example/post/482",
         offer=offer,

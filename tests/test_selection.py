@@ -59,12 +59,12 @@ def test_business_of_the_served_kind_fits_and_a_competitor_does_not() -> None:
 def test_contact_is_the_company_own_address_never_the_hosting_page_address() -> None:
     forum = "Posted by Sam. Questions? admin@forum.example.com | info@forum.example.com"
     assert pick_contact_email("https://forum.example.com/t/1", forum, business=False) is None
-    assert pick_contact_email("https://forum.example.com/t/1", forum + " sam.k@gmail.com", business=False) == "sam.k@gmail.com"
+    assert pick_contact_email("https://forum.example.com/t/1", forum + " sam.k@external.example", business=False) == "sam.k@external.example"
 
-    site = "Tony's Pizza, Austin. Email us: hello@tonys-pizza.com. Site by webmaster@agency.example"
-    assert pick_contact_email("https://www.tonys-pizza.com/contact", site, business=True) == "hello@tonys-pizza.com"
-    assert pick_contact_email("https://www.tonys-pizza.com/", "Reach Tony at tony.pizza@gmail.com", business=True) is None
-    assert pick_contact_email("https://www.yelp.com/biz/tonys", "info@yelp.com hello@tonys-pizza.com", business=True) is None
+    site = "Tony's Pizza, Austin. Email us: hello@tonys-pizza.example. Site by webmaster@agency.example"
+    assert pick_contact_email("https://www.tonys-pizza.example/contact", site, business=True) == "hello@tonys-pizza.example"
+    assert pick_contact_email("https://www.tonys-pizza.example/", "Reach Tony at tony.pizza@external.example", business=True) is None
+    assert pick_contact_email("https://www.yelp.com/biz/tonys", "info@directory.example hello@tonys-pizza.example", business=True) is None
 
 
 def _business_hypothesis() -> Hypothesis:
@@ -81,13 +81,13 @@ def test_b2b_connector_takes_company_sites_and_skips_directories() -> None:
     class Client:
         def search(self, query):
             return (
-                SearchHit(url="https://www.tonys-pizza.com/", snippet="Tony's restaurant in Austin, reservations by phone"),
+                SearchHit(url="https://www.tonys-pizza.example/", snippet="Tony's restaurant in Austin, reservations by phone"),
                 SearchHit(url="https://www.yelp.com/biz/tonys", snippet="Best restaurants in Austin"),
             )
 
     pages = {
-        "https://www.tonys-pizza.com/": "Tony's restaurant. Contact: hello@tonys-pizza.com",
-        "https://www.yelp.com/biz/tonys": "info@yelp.com",
+        "https://www.tonys-pizza.example/": "Tony's restaurant. Contact: hello@tonys-pizza.example",
+        "https://www.yelp.com/biz/tonys": "info@directory.example",
     }
 
     def fetch(url: str) -> str:
@@ -96,7 +96,7 @@ def test_b2b_connector_takes_company_sites_and_skips_directories() -> None:
         return pages[url]
 
     findings = WebSearchPeopleSearch(Client(), page_fetcher=fetch).find(_business_hypothesis())
-    assert findings[0].hit is not None and findings[0].hit.identity == "hello@tonys-pizza.com"
+    assert findings[0].hit is not None and findings[0].hit.identity == "hello@tonys-pizza.example"
     assert findings[0].hit.source_kind == "business"
     assert findings[1].hit is None and findings[1].reject_reason == "not the company's own website"
 

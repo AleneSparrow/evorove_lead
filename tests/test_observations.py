@@ -26,7 +26,7 @@ def test_loads_reasoned_observation_and_skips_contact_dump(tmp_path: Path) -> No
         [
             {
                 "name": "Jordan Lee",
-                "email": "jordan@example-bakery.com",
+                "email": "jordan@bakery.example",
                 "observed_fact": "Already advertises weekend catering to nearby families.",
                 "observed_source": "owner-copied public post, 2026-09-01",
                 "channel": "email",
@@ -50,7 +50,7 @@ def test_loads_reasoned_observation_and_skips_contact_dump(tmp_path: Path) -> No
 
     assert hits == (
         PeopleHit(
-            identity="Jordan Lee, jordan@example-bakery.com",
+            identity="Jordan Lee, jordan@bakery.example",
             observed_fact="Already advertises weekend catering to nearby families.",
             observed_source="owner-copied public post, 2026-09-01",
             channel="email",

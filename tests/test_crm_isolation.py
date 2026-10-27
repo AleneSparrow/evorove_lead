@@ -31,7 +31,7 @@ PAYLOAD = {
     "kind": "assembled",
     "source": "evorove_lead",
     "summary": "Posted looking for weekend catering.",
-    "identity": {"name": "Jordan Lee", "phone": None, "email": "jordan@example-bakery.com"},
+    "identity": {"name": "Jordan Lee", "phone": None, "email": "jordan@bakery.example"},
     "payload": {"hypothesis_id": "hyp_1"},
 }
 

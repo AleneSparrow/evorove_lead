@@ -38,7 +38,7 @@ def _person_hypothesis() -> Hypothesis:
 def test_discover_companies_keeps_company_sites_and_drops_directories():
     client = FakeClient(
         (
-            SearchHit(url="https://www.tonys-pizza.com/", snippet="Tony's restaurant in Austin"),
+            SearchHit(url="https://www.tonys-pizza.example/", snippet="Tony's restaurant in Austin"),
             SearchHit(url="https://www.yelp.com/biz/tonys", snippet="Best restaurants in Austin"),
         )
     )
@@ -47,8 +47,8 @@ def test_discover_companies_keeps_company_sites_and_drops_directories():
 
     assert companies == (
         CompanyCandidate(
-            url="https://www.tonys-pizza.com/",
-            registrable_domain="tonys-pizza.com",
+            url="https://www.tonys-pizza.example/",
+            registrable_domain="tonys-pizza.example",
             snippet="Tony's restaurant in Austin",
             query_used="restaurants near Austin",
         ),
@@ -59,15 +59,15 @@ def test_discover_companies_keeps_company_sites_and_drops_directories():
 def test_discover_companies_dedupes_by_registrable_domain():
     client = FakeClient(
         (
-            SearchHit(url="https://www.tonys-pizza.com/", snippet="homepage"),
-            SearchHit(url="https://www.tonys-pizza.com/menu", snippet="menu page"),
+            SearchHit(url="https://www.tonys-pizza.example/", snippet="homepage"),
+            SearchHit(url="https://www.tonys-pizza.example/menu", snippet="menu page"),
         )
     )
 
     companies = discover_companies(_business_hypothesis(), client)
 
     assert len(companies) == 1
-    assert companies[0].url == "https://www.tonys-pizza.com/"
+    assert companies[0].url == "https://www.tonys-pizza.example/"
 
 
 def test_discover_companies_drops_non_public_urls():

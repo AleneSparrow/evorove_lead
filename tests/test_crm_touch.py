@@ -19,7 +19,7 @@ ALLOWED_CYCLES = frozenset({1, 2, 3})
 
 def test_assembled_touch_matches_crm_lead_touch_shape() -> None:
     candidate = Candidate(
-        identity="Jordan Lee, jordan@example-bakery.com",
+        identity="Jordan Lee, jordan@bakery.example",
         reason="Posted looking for weekend catering for a family event.",
         reason_source="https://directory.example/jordan",
     )

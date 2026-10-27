@@ -457,8 +457,8 @@ def test_leader_email_and_form_come_from_the_page_markup():
     assert found[:2] == ("Maria Alvarez", "Founder")
     text = find_named_leader((("https://northwind.example/team", "Jane Doe is the managing director.", ()),))
     assert text[0] == "Jane Doe" and text[1].casefold() == "managing director"
-    glued = find_named_leader((("https://northwind.example/about", "Case Study Jon Corrin is the CEO.", ()),))
-    assert glued[0] == "Jon Corrin"
+    glued = find_named_leader((("https://northwind.example/about", "Case Study Avery Example is the CEO.", ()),))
+    assert glued[0] == "Avery Example"
     assert find_named_leader((("https://northwind.example/about", "Professional Services Built is the owner.", ()),)) is None
     assert find_named_leader((("https://northwind.example/", "Imagine starting a new job with no guidance.", ()),)) is None
     from evorove_lead.lead_playbooks import fit_quotes
