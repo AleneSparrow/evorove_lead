@@ -1,4 +1,6 @@
-"""Score companies already stored in a source database. Read-only. No CRM write.
+"""Historical manual CLI for scoring saved companies; not in the live cycle-1 path.
+
+Read-only. No CRM write.
 
 The SEC ticker file is downloaded only when its size is known to be at or under
 50 MB, or when a streaming read finishes under that cap. A file that passes the

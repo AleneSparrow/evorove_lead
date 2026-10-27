@@ -1,4 +1,4 @@
-"""Read-only, tenant/run-scoped export for manual pilot review. No network calls."""
+"""Read-only manual pilot-report CLI, not part of the live cycle-1 path. No network calls."""
 from __future__ import annotations
 
 import argparse

@@ -1,4 +1,6 @@
-"""One Haiku read of saved company text. This module does not call a network on import.
+"""Historical manual extraction CLI, not part of the live cycle-1 path.
+
+One Haiku read of saved company text. This module does not call a network on import.
 
 The live command refuses to run unless ANTHROPIC_API_KEY is already set.
 An unknown model price blocks the call. A missing price is never treated as zero.

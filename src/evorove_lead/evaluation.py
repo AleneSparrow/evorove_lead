@@ -1,4 +1,4 @@
-"""Offline gate replay and manually labelled quality evaluation. No network calls."""
+"""Manual offline evaluation CLI, not part of the live cycle-1 path. No network calls."""
 from __future__ import annotations
 import argparse
 import json
