@@ -11,6 +11,11 @@ from evorove_lead.engine import LeadGenerationEngine
 from evorove_lead.business import BusinessSeed
 from intelligence_helpers import *
 
+@pytest.fixture(autouse=True)
+def _acknowledge_isolated_crm_for_pipeline_tests(monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
+
 class CRM:
     def __init__(self, fail=False): self.fail, self.accepted = fail, {}
     def publish(self, business_id, payload):

@@ -29,7 +29,9 @@ EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 
 LOGGER = logging.getLogger(__name__)
 CYCLE2_ISOLATED_ENV = "CRM_CYCLE2_ISOLATED"
+LIVE_WRITE_ACK_ENV = "CRM_LIVE_WRITE_ACK"
 ACCEPT_BODY_LIMIT = 65_536
+DEFERRED_PREFIX = "delivery_deferred:"
 
 
 def _utcnow() -> datetime:
@@ -42,10 +44,29 @@ def crm_cycle2_isolated() -> bool:
     return os.getenv(CYCLE2_ISOLATED_ENV) == "1"
 
 
-def crm_delivery_requested() -> bool:
-    """Live Cold writes need both the delivery flag and cycle-2 isolation."""
+def crm_live_write_acknowledged() -> bool:
+    """Operator explicitly accepts that a connected CRM may trigger cycle 2."""
 
-    return os.getenv("RESEARCH_CRM_DELIVERY") == "1" and crm_cycle2_isolated()
+    return os.getenv(LIVE_WRITE_ACK_ENV) == "1"
+
+
+def crm_delivery_blocked_reason() -> str:
+    """Exactly one explicit mode and the delivery switch are required."""
+
+    if os.getenv("RESEARCH_CRM_DELIVERY") != "1":
+        return "crm_delivery_not_enabled"
+    isolated, live = crm_cycle2_isolated(), crm_live_write_acknowledged()
+    if isolated and live:
+        return "crm_delivery_mode_conflict"
+    if not isolated and not live:
+        return "crm_delivery_mode_not_acknowledged"
+    return ""
+
+
+def crm_delivery_requested() -> bool:
+    """Cold writes need delivery plus one explicit rehearsal or live mode."""
+
+    return not crm_delivery_blocked_reason()
 
 
 @dataclass(frozen=True)
@@ -107,8 +128,9 @@ class HttpCrmLeadTouchSink:
     """Pure HTTP transport: POST one touch to CRM. Raises `CrmDeliveryError`.
 
     A 2xx without `person_id` and `tab` is not a confirmed board write.
-    Without `CRM_CYCLE2_ISOLATED=1` no request is sent: working CRM would
-    emit `cold_assigned` and cycle 2 may write to the person.
+    `CRM_CYCLE2_ISOLATED=1` is for rehearsal. `CRM_LIVE_WRITE_ACK=1` is the
+    separate operator acknowledgment for a connected CRM that can emit
+    `cold_assigned` and trigger cycle 2. Both modes also require delivery=1.
     """
 
     def __init__(self, base_url: str, secret: str) -> None:
@@ -118,10 +140,9 @@ class HttpCrmLeadTouchSink:
 
     def publish(self, business_id: str, payload: dict[str, object]) -> None:
         self.last_receipt = None
-        if not crm_delivery_requested():
-            raise CrmDeliveryError(
-                "crm_cycle2_not_isolated" if not crm_cycle2_isolated() else "crm_delivery_not_enabled"
-            )
+        blocked_reason = crm_delivery_blocked_reason()
+        if blocked_reason:
+            raise CrmDeliveryError(blocked_reason)
         url = f"{self._base_url}/api/v1/internal/businesses/{business_id}/lead-touches"
         body = json.dumps(payload).encode("utf-8")
         request = urllib.request.Request(
@@ -180,6 +201,10 @@ class CrmDeliveryStore(Protocol):
         now: datetime,
     ) -> None: ...
 
+    def record_deferred(
+        self, business_id: str, touch_id: str, payload: dict[str, object], reason: str, now: datetime
+    ) -> None: ...
+
     def pending(self) -> Sequence[CrmDeliveryRecord]: ...
 
     def remove(self, business_id: str, touch_id: str) -> None: ...
@@ -202,6 +227,11 @@ class NullCrmDeliveryStore:
 
     def pending(self) -> Sequence[CrmDeliveryRecord]:
         return ()
+
+    def record_deferred(
+        self, business_id: str, touch_id: str, payload: dict[str, object], reason: str, now: datetime
+    ) -> None:
+        return None
 
     def remove(self, business_id: str, touch_id: str) -> None:
         return None
@@ -252,6 +282,24 @@ class RecordingCrmDeliveryStore:
     def pending(self) -> Sequence[CrmDeliveryRecord]:
         return tuple(sorted(self._records.values(), key=lambda record: record.created_at))
 
+    def record_deferred(
+        self, business_id: str, touch_id: str, payload: dict[str, object], reason: str, now: datetime
+    ) -> None:
+        key = (business_id, touch_id)
+        existing = self._records.get(key)
+        if existing is not None and not existing.last_error.startswith(DEFERRED_PREFIX):
+            return
+        self._records[key] = CrmDeliveryRecord(
+            id=existing.id if existing else new_id("delivery"),
+            business_id=business_id,
+            touch_id=touch_id,
+            payload=dict(payload),
+            attempts=existing.attempts if existing else 0,
+            last_error=f"{DEFERRED_PREFIX}{reason}",
+            created_at=existing.created_at if existing else now,
+            updated_at=now,
+        )
+
     def remove(self, business_id: str, touch_id: str) -> None:
         self._records.pop((business_id, touch_id), None)
 
@@ -280,11 +328,14 @@ class OutboxCrmLeadTouchSink:
 
     def publish(self, business_id: str, payload: dict[str, object]) -> None:
         touch_id = str(payload.get("touch_id") or "").strip()
+        blocked_reason = crm_delivery_blocked_reason()
+        if blocked_reason:
+            self._store.record_deferred(business_id, touch_id, payload, blocked_reason, self._clock())
+            LOGGER.info("crm touch deferred: business_id=%s touch_id=%s reason=%s", business_id, touch_id, blocked_reason)
+            return
         try:
             self._http.publish(business_id, payload)
         except CrmDeliveryError as exc:
-            if str(exc) in {"crm_cycle2_not_isolated", "crm_delivery_not_enabled"}:
-                return
             self._store.record_failure(business_id, touch_id, payload, str(exc), self._clock())
             LOGGER.warning(
                 "crm touch not delivered, queued for retry: business_id=%s touch_id=%s error=%s",
@@ -329,24 +380,26 @@ def redeliver_pending(
     return redelivered, store.pending_count()
 
 
-def delivery_counts(redelivered: int, pending: int, *, accepted_cold: int = 0, blocked_reason: str = "") -> dict[str, object]:
+def delivery_counts(redelivered: int, pending: int, *, deferred: int = 0, accepted_cold: int = 0, blocked_reason: str = "") -> dict[str, object]:
     return {
         "redelivered": redelivered,
         "pending": pending,
+        "deferred": deferred,
         "accepted_cold": accepted_cold,
         "blocked_reason": blocked_reason,
     }
 
 
 def flush_deliveries(http: HttpCrmLeadTouchSink | None, store: CrmDeliveryStore, *, limit: int = 100) -> dict[str, object]:
-    """Flush or report why CRM was not contacted. Isolation is checked here, not after POST."""
+    """Flush or report why CRM was not contacted. Mode is checked before POST."""
 
     pending = store.pending_count()
+    deferred = sum(record.last_error.startswith(DEFERRED_PREFIX) for record in store.pending())
     if http is None:
-        return delivery_counts(0, pending)
-    if not crm_delivery_requested():
-        reason = "crm_cycle2_not_isolated" if not crm_cycle2_isolated() else "crm_delivery_not_enabled"
-        return delivery_counts(0, pending, blocked_reason=reason)
+        return delivery_counts(0, pending, deferred=deferred)
+    blocked_reason = crm_delivery_blocked_reason()
+    if blocked_reason:
+        return delivery_counts(0, pending, deferred=deferred, blocked_reason=blocked_reason)
     accepted_cold = 0
 
     class _CountCold:
@@ -358,7 +411,8 @@ def flush_deliveries(http: HttpCrmLeadTouchSink | None, store: CrmDeliveryStore,
                 accepted_cold += 1
 
     redelivered, pending = redeliver_pending(_CountCold(), store, limit=limit)
-    return delivery_counts(redelivered, pending, accepted_cold=accepted_cold)
+    deferred = sum(record.last_error.startswith(DEFERRED_PREFIX) for record in store.pending())
+    return delivery_counts(redelivered, pending, deferred=deferred, accepted_cold=accepted_cold)
 
 
 def http_sink_from_env() -> HttpCrmLeadTouchSink | None:
@@ -376,8 +430,10 @@ def sink_from_env() -> LeadTouchSink:
     if http is None:
         return NullLeadTouchSink()
     from evorove_lead.sqlalchemy_warehouse import crm_delivery_store_from_env
-
-    return OutboxCrmLeadTouchSink(http, crm_delivery_store_from_env())
+    store = crm_delivery_store_from_env()
+    if isinstance(store, NullCrmDeliveryStore):
+        raise RuntimeError("crm_outbox_not_configured: configured CRM requires a durable delivery store")
+    return OutboxCrmLeadTouchSink(http, store)
 
 
 def stable_person_id(business_id: str, *, phone: str | None = None, email: str | None = None, identity: str = "") -> str:

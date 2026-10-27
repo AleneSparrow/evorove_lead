@@ -1,4 +1,4 @@
-"""CRM writes need cycle-2 isolation; handoff is not a confirmed Cold."""
+"""CRM writes need an explicit rehearsal or live mode."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ from evorove_lead.crm_touch import (
     OutboxCrmLeadTouchSink,
     RecordingCrmDeliveryStore,
     crm_delivery_requested,
+    crm_delivery_blocked_reason,
     flush_deliveries,
     parse_accept_receipt,
 )
@@ -73,19 +74,46 @@ def test_http_and_outbox_stay_still_unless_both_live_flags(monkeypatch):
         monkeypatch.setenv("CRM_CYCLE2_ISOLATED", isolated)
         sink.publish("tenant-a", PAYLOAD)
         assert opened.requests == []
-        assert store.pending() == ()
+        pending = store.pending()
+        assert len(pending) == 1
+        assert pending[0].attempts == 0
+        assert pending[0].last_error.startswith("delivery_deferred:")
     result = flush_deliveries(HttpCrmLeadTouchSink("https://crm.example", "secret"), store)
     assert result["redelivered"] == 0
     assert result["blocked_reason"]
+    assert result["deferred"] == 1
+    assert len(store.pending()) == 1
+
+
+def test_deferred_touch_flushes_once_after_live_ack(monkeypatch):
+    store = RecordingCrmDeliveryStore()
+    body = json.dumps({"person_id": "ppl_abc", "tab": "cold", "touch_id": PAYLOAD["touch_id"]}).encode()
+    opened = _UrlOpen(body)
+    monkeypatch.setattr("evorove_lead.crm_touch.urllib.request.urlopen", opened)
+    http = HttpCrmLeadTouchSink("https://crm.example", "secret")
+    sink = OutboxCrmLeadTouchSink(http, store, clock=lambda: NOW)
+    sink.publish("tenant-a", PAYLOAD)
+    sink.publish("tenant-a", PAYLOAD)
+    assert len(store.pending()) == 1
+    assert store.pending()[0].attempts == 0
+    assert opened.requests == []
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_LIVE_WRITE_ACK", "1")
+    result = flush_deliveries(http, store)
+    assert result["redelivered"] == 1
+    assert result["accepted_cold"] == 1
+    assert result["deferred"] == 0
     assert store.pending() == ()
+    assert len(opened.requests) == 1
 
 
 def test_http_sink_does_not_contact_crm_without_isolation(monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
     monkeypatch.delenv("CRM_CYCLE2_ISOLATED", raising=False)
     opened = _UrlOpen(b"{}")
     monkeypatch.setattr("evorove_lead.crm_touch.urllib.request.urlopen", opened)
     sink = HttpCrmLeadTouchSink("https://crm.example", "secret")
-    with pytest.raises(CrmDeliveryError, match="crm_cycle2_not_isolated"):
+    with pytest.raises(CrmDeliveryError, match="crm_delivery_mode_not_acknowledged"):
         sink.publish("tenant-a", PAYLOAD)
     assert opened.requests == []
     assert sink.last_receipt is None
@@ -138,6 +166,7 @@ def test_http_sink_does_not_treat_in_work_as_confirmed_cold(monkeypatch):
 
 
 def test_flush_without_isolation_does_not_increment_attempts_or_post(monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
     monkeypatch.delenv("CRM_CYCLE2_ISOLATED", raising=False)
     store = RecordingCrmDeliveryStore()
     store.record_failure("tenant-a", PAYLOAD["touch_id"], PAYLOAD, "down", NOW)
@@ -148,8 +177,9 @@ def test_flush_without_isolation_does_not_increment_attempts_or_post(monkeypatch
     assert result == {
         "redelivered": 0,
         "pending": 1,
+        "deferred": 0,
         "accepted_cold": 0,
-        "blocked_reason": "crm_cycle2_not_isolated",
+        "blocked_reason": "crm_delivery_mode_not_acknowledged",
     }
     assert opened.requests == []
     assert store.pending()[0].attempts == 1
@@ -242,6 +272,54 @@ def test_research_delivery_needs_both_flags(monkeypatch):
     assert crm_delivery_requested() is True
 
 
+def test_live_write_requires_separate_ack_and_never_reuses_isolation(monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.delenv("CRM_CYCLE2_ISOLATED", raising=False)
+    monkeypatch.delenv("CRM_LIVE_WRITE_ACK", raising=False)
+    assert crm_delivery_requested() is False
+    assert crm_delivery_blocked_reason() == "crm_delivery_mode_not_acknowledged"
+
+    monkeypatch.setenv("CRM_LIVE_WRITE_ACK", "1")
+    assert crm_delivery_requested() is True
+    assert crm_delivery_blocked_reason() == ""
+
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
+    assert crm_delivery_requested() is False
+    assert crm_delivery_blocked_reason() == "crm_delivery_mode_conflict"
+
+    monkeypatch.delenv("CRM_CYCLE2_ISOLATED", raising=False)
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "0")
+    assert crm_delivery_requested() is False
+    assert crm_delivery_blocked_reason() == "crm_delivery_not_enabled"
+
+
+def test_live_ack_posts_only_when_delivery_flag_is_enabled(monkeypatch):
+    monkeypatch.setenv("CRM_LIVE_WRITE_ACK", "1")
+    monkeypatch.delenv("CRM_CYCLE2_ISOLATED", raising=False)
+    opened = _UrlOpen(b'{"person_id":"ppl_abc","tab":"cold","touch_id":"cycle1:assembled:ppl_abc"}')
+    monkeypatch.setattr("evorove_lead.crm_touch.urllib.request.urlopen", opened)
+    sink = HttpCrmLeadTouchSink("https://crm.example", "secret")
+    monkeypatch.delenv("RESEARCH_CRM_DELIVERY", raising=False)
+    with pytest.raises(CrmDeliveryError, match="crm_delivery_not_enabled"):
+        sink.publish("tenant-a", PAYLOAD)
+    assert opened.requests == []
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    sink.publish("tenant-a", PAYLOAD)
+    assert len(opened.requests) == 1
+    assert sink.last_receipt is not None and sink.last_receipt.confirmed_cold
+
+
+def test_preflight_reports_live_ack_without_isolation_blocker(monkeypatch):
+    monkeypatch.setenv("CRM_BASE_URL", "https://crm.example")
+    monkeypatch.setenv("INTERNAL_TASK_SECRET", "local_development_only")
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_LIVE_WRITE_ACK", "1")
+    report = preflight()
+    assert report["live_write_acknowledged"] is True
+    assert report["crm_blocked_reason"] == ""
+    assert not any("CRM delivery" in item for item in report["blockers"])
+
+
 def test_preflight_blocks_configured_crm_without_isolation(monkeypatch):
     monkeypatch.setenv("WEB_SEARCH_BASE_URL", "http://localhost:8080")
     monkeypatch.setenv("RESEARCH_ENABLED", "1")
@@ -253,7 +331,7 @@ def test_preflight_blocks_configured_crm_without_isolation(monkeypatch):
     report = preflight()
     assert report["cycle2_isolated"] is False
     assert report["crm_configured"] is True
-    assert any("not isolated" in item for item in report["blockers"])
+    assert any("crm_delivery_not_enabled" in item for item in report["blockers"])
 
 
 def test_parse_accept_receipt_rejects_empty_and_handoff_shaped_bodies():
@@ -275,5 +353,5 @@ def test_api_flush_stays_blocked_without_isolation(monkeypatch):
         "/api/v1/internal/crm-deliveries/flush",
         headers={"X-Internal-Task-Secret": "local_development_only"},
     )
-    assert response.json()["blocked_reason"] == "crm_cycle2_not_isolated"
+    assert response.json()["blocked_reason"] == "crm_delivery_not_enabled"
     assert store.pending()[0].attempts == 1

@@ -631,6 +631,37 @@ class SqlAlchemyCrmDeliveryStore:
                 row.updated_at = now
             session.commit()
 
+    def record_deferred(
+        self,
+        business_id: str,
+        touch_id: str,
+        payload: dict[str, object],
+        reason: str,
+        now: datetime,
+    ) -> None:
+        from evorove_lead.crm_touch import DEFERRED_PREFIX
+
+        with self._session_factory() as session:
+            row = session.scalars(
+                select(CrmDeliveryRow).where(
+                    CrmDeliveryRow.business_id == business_id,
+                    CrmDeliveryRow.touch_id == touch_id,
+                )
+            ).first()
+            if row is None:
+                session.add(
+                    CrmDeliveryRow(
+                        id=new_id("delivery"), business_id=business_id, touch_id=touch_id,
+                        payload=dict(payload), attempts=0,
+                        last_error=f"{DEFERRED_PREFIX}{reason}", created_at=now, updated_at=now,
+                    )
+                )
+            elif (row.last_error or "").startswith(DEFERRED_PREFIX):
+                row.payload = dict(payload)
+                row.last_error = f"{DEFERRED_PREFIX}{reason}"
+                row.updated_at = now
+            session.commit()
+
     def pending(self):
         with self._session_factory() as session:
             rows = session.scalars(select(CrmDeliveryRow).order_by(CrmDeliveryRow.created_at))

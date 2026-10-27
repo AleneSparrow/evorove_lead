@@ -163,6 +163,8 @@ def test_documented_crm_projection_fits_actual_cycle_two_contract():
 
 
 def test_research_reanalysis_persists_pain_and_run_metric(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
     import intelligence_helpers as fixtures
     from test_research_pipeline import setup_pipeline
     from evorove_lead.business import BusinessSeed

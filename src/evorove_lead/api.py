@@ -42,7 +42,10 @@ from evorove_lead.searches import (
 )
 from evorove_lead.web_search import WebSearchClient, client_from_env
 
-from evorove_lead.crm_touch import CrmDeliveryStore, crm_cycle2_isolated, flush_deliveries, http_sink_from_env
+from evorove_lead.crm_touch import (
+    CrmDeliveryStore, crm_cycle2_isolated, crm_delivery_blocked_reason,
+    crm_live_write_acknowledged, flush_deliveries, http_sink_from_env,
+)
 from evorove_lead.lead_feedback import FEEDBACK_KINDS, apply_feedback
 from evorove_lead.insights import register_insights_routes
 from evorove_lead.sqlalchemy_warehouse import crm_delivery_store_from_env, warehouse_from_env
@@ -249,7 +252,10 @@ def create_app(
         _require_task_secret(x_internal_task_secret)
         return {
             "pending": deliveries.pending_count(),
+            "deferred": sum(record.last_error.startswith("delivery_deferred:") for record in deliveries.pending()),
             "cycle2_isolated": crm_cycle2_isolated(),
+            "live_write_acknowledged": crm_live_write_acknowledged(),
+            "blocked_reason": crm_delivery_blocked_reason(),
         }
 
     @app.post("/api/v1/internal/crm-deliveries/flush")

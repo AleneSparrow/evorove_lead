@@ -64,7 +64,9 @@ class _AlwaysFailingHttpSink:
         raise CrmDeliveryError("connection refused")
 
 
-def test_failed_publish_is_queued_and_does_not_block_search(caplog) -> None:
+def test_failed_publish_is_queued_and_does_not_block_search(caplog, monkeypatch) -> None:
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
     store = RecordingCrmDeliveryStore()
     sink = OutboxCrmLeadTouchSink(_AlwaysFailingHttpSink(), store, clock=lambda: NOW)
 
@@ -84,7 +86,9 @@ def test_failed_publish_is_queued_and_does_not_block_search(caplog) -> None:
     assert "@" not in caplog.text
 
 
-def test_successful_publish_clears_the_queue() -> None:
+def test_successful_publish_clears_the_queue(monkeypatch) -> None:
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
     store = RecordingCrmDeliveryStore()
     http = _FakeHttpSink()
     sink = OutboxCrmLeadTouchSink(http, store, clock=lambda: NOW)
@@ -181,11 +185,12 @@ def test_sink_from_env_falls_back_to_null_without_crm_config(monkeypatch) -> Non
     assert isinstance(sink_from_env(), NullLeadTouchSink)
 
 
-def test_sink_from_env_wraps_http_in_the_outbox(monkeypatch) -> None:
+def test_sink_from_env_requires_durable_outbox_when_crm_is_configured(monkeypatch) -> None:
     monkeypatch.setenv("CRM_BASE_URL", "https://crm.example")
     monkeypatch.setenv("INTERNAL_TASK_SECRET", "local_development_only")
     monkeypatch.delenv("DATABASE_URL", raising=False)
-    assert isinstance(sink_from_env(), OutboxCrmLeadTouchSink)
+    with pytest.raises(RuntimeError, match="crm_outbox_not_configured"):
+        sink_from_env()
 
 
 @pytest.fixture()
@@ -197,7 +202,6 @@ def sql_store(tmp_path):
 
 def test_sql_store_roundtrip(sql_store) -> None:
     assert sql_store.pending_count() == 0
-
     sql_store.record_failure("tenant-a", TOUCH_ID, PAYLOAD, "first failure", NOW)
     sql_store.record_failure("tenant-a", TOUCH_ID, PAYLOAD, "second failure", LATER)
 
@@ -214,6 +218,20 @@ def test_sql_store_roundtrip(sql_store) -> None:
     sql_store.remove("tenant-a", TOUCH_ID)
     assert sql_store.pending() == ()
     assert sql_store.pending_count() == 0
+
+
+def test_sql_store_keeps_deferred_touch_without_network_attempt(sql_store) -> None:
+    sql_store.record_deferred("tenant-a", TOUCH_ID, PAYLOAD, "crm_delivery_not_enabled", NOW)
+    sql_store.record_deferred("tenant-a", TOUCH_ID, PAYLOAD, "crm_delivery_not_enabled", LATER)
+    assert sql_store.pending_count() == 1
+    record = sql_store.pending()[0]
+    assert record.attempts == 0
+    assert record.last_error == "delivery_deferred:crm_delivery_not_enabled"
+    assert record.created_at.replace(tzinfo=timezone.utc) == NOW
+    sql_store.record_failure("tenant-a", TOUCH_ID, PAYLOAD, "connection refused", LATER)
+    assert sql_store.pending()[0].attempts == 1
+    sql_store.record_deferred("tenant-a", TOUCH_ID, PAYLOAD, "crm_delivery_not_enabled", LATER)
+    assert sql_store.pending()[0].last_error == "connection refused"
 
 
 def test_crm_delivery_store_from_env_without_database_url(monkeypatch) -> None:
@@ -239,6 +257,7 @@ def test_flush_counts_pending_without_crm_connection(monkeypatch, tmp_path) -> N
     assert flush_crm_deliveries_from_env() == {
         "redelivered": 0,
         "pending": 1,
+        "deferred": 0,
         "accepted_cold": 0,
         "blocked_reason": "",
     }
@@ -284,7 +303,13 @@ def test_api_status_counts_pending_deliveries() -> None:
     )
 
     assert response.status_code == 200
-    assert response.json() == {"pending": 1, "cycle2_isolated": False}
+    assert response.json() == {
+        "pending": 1,
+        "deferred": 0,
+        "cycle2_isolated": False,
+        "live_write_acknowledged": False,
+        "blocked_reason": "crm_delivery_not_enabled",
+    }
 
 
 def test_api_flush_retries_queued_touches(monkeypatch) -> None:
@@ -298,12 +323,13 @@ def test_api_flush_retries_queued_touches(monkeypatch) -> None:
     )
 
     assert response.status_code == 200
-    # Working CRM is not contacted until the operator isolates cycle 2.
+    # Working CRM is not contacted until the operator enables one explicit mode.
     assert response.json() == {
         "redelivered": 0,
         "pending": 1,
+        "deferred": 0,
         "accepted_cold": 0,
-        "blocked_reason": "crm_cycle2_not_isolated",
+        "blocked_reason": "crm_delivery_not_enabled",
     }
     assert store.pending()[0].attempts == 1
 

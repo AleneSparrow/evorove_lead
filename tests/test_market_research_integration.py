@@ -107,7 +107,9 @@ def test_client_zero_uses_market_evidence_and_cached_report(monkeypatch, tmp_pat
     db.dispose()
 
 
-def test_market_result_changes_qualified_outcome_without_becoming_person_evidence(tmp_path):
+def test_market_result_changes_qualified_outcome_without_becoming_person_evidence(tmp_path, monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
     outcomes = []
     for alternative in (True, False):
         root = tmp_path / str(alternative)

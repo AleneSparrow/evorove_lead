@@ -1,3 +1,5 @@
+import pytest
+
 from evorove_lead.business import BusinessSeed
 from evorove_lead.engine import GenerationStatus, LeadGenerationEngine
 from evorove_lead.observations import OwnerObservationPeopleSearch
@@ -262,9 +264,8 @@ def test_sink_from_env_needs_url_and_secret(monkeypatch) -> None:
     assert isinstance(sink_from_env(), NullLeadTouchSink)
     monkeypatch.setenv("CRM_BASE_URL", "http://crm.example")
     monkeypatch.setenv("INTERNAL_TASK_SECRET", "local_development_only")
-    sink = sink_from_env()
-    assert isinstance(sink, OutboxCrmLeadTouchSink)
-    assert isinstance(sink._http, HttpCrmLeadTouchSink)
+    with pytest.raises(RuntimeError, match="crm_outbox_not_configured"):
+        sink_from_env()
 
 
 def test_engine_writes_traces_and_rejections_to_its_own_warehouse_not_crm() -> None:
