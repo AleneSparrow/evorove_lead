@@ -163,14 +163,14 @@ from evorove_lead.intelligence_store import IntelligenceStore
 from evorove_lead.searches import SearchTarget
 from evorove_lead.research_budget import DailyBudgetStore
 from datetime import datetime, timezone
-engine = create_engine("postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_test", connect_args={"options": "-csearch_path=" + sys.argv[1]})
+engine = create_engine(sys.argv[2], connect_args={"options": "-csearch_path=" + sys.argv[1]})
 owner = LeaseStore(engine).acquire("crashed", target=SearchTarget("crashed", "https://seller.example", "", datetime.now(timezone.utc)))
 with owner.activate(heartbeat=False):
     DailyBudgetStore(engine).reserve("crashed", "test-day", 100, 150)
     IntelligenceStore(engine).save("crashed", "run", owner.run_id, {"id": owner.run_id, "status": "running", "usage": {"cost_microusd": 100}})
     os._exit(23)
 '''
-    result = subprocess.run([sys.executable, "-c", script, schema], env={"PATH": os.environ["PATH"], "PYTHONPATH": str(Path("src").resolve()), "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True, timeout=15)
+    result = subprocess.run([sys.executable, "-c", script, schema, str(pg.url)], env={"PATH": os.environ["PATH"], "PYTHONPATH": str(Path("src").resolve()), "PYTHONDONTWRITEBYTECODE": "1"}, capture_output=True, text=True, timeout=15)
     assert result.returncode == 23, result.stderr
     targets = SqlAlchemySearchTargetStore(pg)
     assert targets.get("crashed").last_status == "running"
@@ -182,7 +182,9 @@ with owner.activate(heartbeat=False):
     assert IntelligenceStore(pg).list("crashed", "run")[0]["usage"]["cost_microusd"] == 100
 
 
-def test_retry_uses_atomic_admission_and_pending_outbox(pg):
+def test_retry_uses_atomic_admission_and_pending_outbox(pg, monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
     from evorove_lead.crm_touch import CrmDeliveryError
     class CRM:
         def __init__(self): self.calls = 0
@@ -206,6 +208,37 @@ def test_retry_uses_atomic_admission_and_pending_outbox(pg):
         for table in (CandidateRow, AdmissionRow, CrmDeliveryRow):
             assert session.scalar(select(func.count()).select_from(table)) == 1
     assert len(IntelligenceStore(pg).list("a", "run_attempt")) == 3
+
+
+def test_cold_touch_waits_for_rehearsal_ack_then_keeps_touch_id(pg, monkeypatch):
+    from evorove_lead.crm_touch import flush_deliveries
+
+    class CRM:
+        def __init__(self):
+            self.touch_ids = []
+
+        def publish(self, business_id, payload):
+            self.touch_ids.append(payload["touch_id"])
+
+    crm = CRM()
+    engine = make_engine(pg, crm=crm)
+    result = engine.generate(BusinessSeed(site_url="https://seller.example", business_id="a"))
+    assert len(result.handoffs) == 1
+    store = SqlAlchemyCrmDeliveryStore(pg)
+    pending = store.pending()
+    assert len(pending) == 1
+    touch_id = pending[0].touch_id
+    assert pending[0].attempts == 0
+    assert pending[0].last_error == "delivery_deferred:crm_delivery_not_enabled"
+    assert crm.touch_ids == []
+    assert flush_deliveries(crm, store)["redelivered"] == 0
+    assert store.pending()[0].touch_id == touch_id
+
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
+    assert flush_deliveries(crm, store)["redelivered"] == 1
+    assert crm.touch_ids == [touch_id]
+    assert store.pending() == ()
 
 
 def test_legacy_running_requires_operator_confirmation(pg):

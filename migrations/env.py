@@ -5,8 +5,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from evorove_lead.sqlalchemy_models import Base
-from evorove_lead import intelligence_store, research_budget, research_cache, llm_usage, research_delivery, source_core_models  # register metadata
+from evorove_lead.register_metadata import registered_metadata
 from evorove_lead.sqlalchemy_warehouse import database_url_from_environment
 
 config = context.config
@@ -14,7 +13,7 @@ if config.config_file_name:
     fileConfig(config.config_file_name)
 if config.attributes.get("connection") is None:
     config.set_main_option("sqlalchemy.url", database_url_from_environment())
-target_metadata = Base.metadata
+target_metadata = registered_metadata()
 
 
 def run_migrations_offline() -> None:

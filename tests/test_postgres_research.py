@@ -9,23 +9,26 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from evorove_lead.sqlalchemy_models import Base, CandidateRow, CrmDeliveryRow
 from evorove_lead.intelligence_store import IntelligenceStore, ResearchClaimRow, ClaimSourceRow
 from evorove_lead.research_budget import DailyBudgetStore, BudgetExhausted
 from evorove_lead.research_delivery import ResearchDelivery, AdmissionRow
 from evorove_lead.sqlalchemy_warehouse import SqlAlchemyAnalysisWarehouse
 from evorove_lead.warehouse import BriefRecord, HypothesisRecord, CandidateRecord
+from evorove_lead.register_metadata import registered_metadata
 
 pytestmark = pytest.mark.skipif(os.getenv("EVOROVE_TEST_POSTGRES") != "1", reason="isolated PostgreSQL not enabled")
 
 @pytest.fixture
 def pg(monkeypatch):
     # This fixed local test-only endpoint contains no credentials/secrets.
-    engine = create_engine("postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_test")
+    url = os.getenv("EVOROVE_TEST_POSTGRES_URL", "postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_test")
+    engine = create_engine(url)
     schema = "test_" + uuid.uuid4().hex
     with engine.begin() as connection: connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-    scoped = create_engine("postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_test", connect_args={"options": f"-csearch_path={schema}"})
-    Base.metadata.create_all(scoped)
+    scoped = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
+    registered_metadata().create_all(scoped)
     yield scoped
     scoped.dispose()
     with engine.begin() as connection: connection.execute(text(f'DROP SCHEMA "{schema}" CASCADE'))
@@ -65,7 +68,7 @@ def test_postgres_concurrent_admission_and_crash_pending(pg):
 
 def test_postgres_migration_roundtrip(pg, monkeypatch):
     # Exercise Alembic itself on an empty schema; no existing database is touched.
-    Base.metadata.drop_all(pg)
+    registered_metadata().drop_all(pg)
     from evorove_lead import sqlalchemy_warehouse
     monkeypatch.setattr(sqlalchemy_warehouse, "database_url_from_environment", lambda: str(pg.url))
     config = Config("alembic.ini")
@@ -73,7 +76,7 @@ def test_postgres_migration_roundtrip(pg, monkeypatch):
     try:
         command.upgrade(config, "head")
         with pg.connect() as connection:
-            assert connection.execute(text("select version_num from alembic_version")).scalar() == "0014"
+            assert connection.execute(text("select version_num from alembic_version")).scalar() == ScriptDirectory.from_config(config).get_current_head()
         names = set(inspect(pg).get_table_names())
         assert {"lead_qualifications", "lead_feedback", "llm_usage"} <= names
         assert {"research_documents", "research_budget_days", "research_run_leases"} <= names
@@ -94,7 +97,9 @@ def test_postgres_migration_roundtrip(pg, monkeypatch):
         assert deliveries.pending()[0].touch_id == "legacy-touch"
     finally: config.attributes["connection"].close()
 
-def test_complete_pipeline_on_postgres_with_scripted_external_services(pg):
+def test_complete_pipeline_on_postgres_with_scripted_external_services(pg, monkeypatch):
+    monkeypatch.setenv("RESEARCH_CRM_DELIVERY", "1")
+    monkeypatch.setenv("CRM_CYCLE2_ISOLATED", "1")
     from intelligence_helpers import Presence, Search, Completion, fetch, NOW
     from evorove_lead.engine import LeadGenerationEngine
     from evorove_lead.business import BusinessSeed

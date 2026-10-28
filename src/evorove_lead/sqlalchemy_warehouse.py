@@ -562,8 +562,9 @@ class SqlAlchemyAnalysisWarehouse:
 
 def create_all(engine) -> None:
     """Test/dev convenience: create tables without Alembic. Prod uses migrations."""
+    from evorove_lead.register_metadata import registered_metadata
 
-    Base.metadata.create_all(engine)
+    registered_metadata().create_all(engine)
 
 
 def warehouse_from_env() -> AnalysisWarehouse:
@@ -656,7 +657,7 @@ class SqlAlchemyCrmDeliveryStore:
                         last_error=f"{DEFERRED_PREFIX}{reason}", created_at=now, updated_at=now,
                     )
                 )
-            elif (row.last_error or "").startswith(DEFERRED_PREFIX):
+            elif not row.last_error or row.last_error.startswith(DEFERRED_PREFIX):
                 row.payload = dict(payload)
                 row.last_error = f"{DEFERRED_PREFIX}{reason}"
                 row.updated_at = now

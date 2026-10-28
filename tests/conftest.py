@@ -7,6 +7,7 @@ database set the variable themselves.
 
 from __future__ import annotations
 
+import os
 import pytest
 
 _ISOLATED_ENV = (
@@ -16,9 +17,9 @@ _ISOLATED_ENV = (
     "INTERNAL_TASK_SECRET",
     "WEB_SEARCH_BASE_URL",
     "AI_PROVIDER",
-    "RESEARCH_CRM_DELIVERY",
     "CRM_CYCLE2_ISOLATED",
     "CRM_LIVE_WRITE_ACK",
+    "EVOROVE_CLIENT_ZERO_BUSINESS_ID",
     "ANTHROPIC_API_KEY",
     "ANTHROPIC_MODEL",
 )
@@ -26,5 +27,5 @@ _ISOLATED_ENV = (
 
 @pytest.fixture(autouse=True)
 def _isolate_external_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in _ISOLATED_ENV:
+    for name in set(_ISOLATED_ENV) | {key for key in os.environ if key.startswith("RESEARCH_")}:
         monkeypatch.delenv(name, raising=False)
