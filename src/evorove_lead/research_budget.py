@@ -30,7 +30,7 @@ class BudgetDayRow(Base):
     business_id = Column(String(128), primary_key=True)
     day = Column(String(10), primary_key=True)
     spent = Column(BigInteger, nullable=False, default=0)
-    __table_args__ = (CheckConstraint("spent >= 0"),)
+    __table_args__ = (CheckConstraint("spent >= 0", name="research_budget_days_spent_check"),)
 
 class DailyBudgetStore:
     def __init__(self, engine): self.engine = engine

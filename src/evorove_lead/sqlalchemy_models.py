@@ -17,6 +17,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKeyConstraint,
+    Index,
     Integer,
     String,
     Text,
@@ -49,6 +50,7 @@ class BriefRow(Base):
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_briefs_business_id_id"),
+        Index("ix_briefs_business", "business_id", "created_at"),
     )
 
 
@@ -82,6 +84,7 @@ class HypothesisRow(Base):
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_hypotheses_business_id_id"),
+        Index("ix_hypotheses_business_status", "business_id", "status"),
         ForeignKeyConstraint(
             ["business_id", "brief_id"],
             ["briefs.business_id", "briefs.id"],
@@ -117,6 +120,7 @@ class TraceRow(Base):
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_traces_business_id_id"),
+        Index("ix_traces_business_hypothesis", "business_id", "hypothesis_id"),
         ForeignKeyConstraint(
             ["business_id", "hypothesis_id"],
             ["hypotheses.business_id", "hypotheses.id"],
@@ -139,6 +143,7 @@ class RejectedTraceRow(Base):
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_rejected_traces_business_id_id"),
+        Index("ix_rejected_traces_business", "business_id", "rejected_at"),
     )
 
 
@@ -169,6 +174,7 @@ class CandidateRow(Base):
 
     __table_args__ = (
         UniqueConstraint("business_id", "id", name="uq_candidates_business_id_id"),
+        Index("ix_candidates_business_hypothesis", "business_id", "hypothesis_id"),
         ForeignKeyConstraint(
             ["business_id", "hypothesis_id"],
             ["hypotheses.business_id", "hypotheses.id"],
@@ -194,6 +200,7 @@ class HypothesisOutcomeRow(Base):
     recorded_at = Column(DateTime(timezone=True), nullable=False)
 
     __table_args__ = (
+        Index("ix_hypothesis_outcomes_business_hypothesis", "business_id", "hypothesis_id"),
         ForeignKeyConstraint(
             ["business_id", "hypothesis_id"],
             ["hypotheses.business_id", "hypotheses.id"],
