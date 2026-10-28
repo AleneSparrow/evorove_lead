@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import pytest
 from sqlalchemy import create_engine, inspect, text, select, func
+from sqlalchemy.engine import make_url
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
 from alembic import command
@@ -20,10 +21,23 @@ from evorove_lead.register_metadata import registered_metadata
 
 pytestmark = pytest.mark.skipif(os.getenv("EVOROVE_TEST_POSTGRES") != "1", reason="isolated PostgreSQL not enabled")
 
+
+def isolated_postgres_url() -> str:
+    url = os.getenv("EVOROVE_TEST_POSTGRES_URL", "postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_test")
+    if make_url(url).host not in {"127.0.0.1", "localhost"}:
+        raise RuntimeError("EVOROVE_TEST_POSTGRES_URL must point to localhost")
+    return url
+
+
+def test_postgres_url_rejects_nonlocal_host_before_connect(monkeypatch):
+    monkeypatch.setenv("EVOROVE_TEST_POSTGRES_URL", "postgresql+psycopg://evorove_test@db.example/evorove_test")
+    with pytest.raises(RuntimeError, match="must point to localhost"):
+        isolated_postgres_url()
+
 @pytest.fixture
 def pg(monkeypatch):
     # This fixed local test-only endpoint contains no credentials/secrets.
-    url = os.getenv("EVOROVE_TEST_POSTGRES_URL", "postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_test")
+    url = isolated_postgres_url()
     engine = create_engine(url)
     schema = "test_" + uuid.uuid4().hex
     with engine.begin() as connection: connection.execute(text(f'CREATE SCHEMA "{schema}"'))

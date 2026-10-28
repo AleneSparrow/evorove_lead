@@ -8,9 +8,11 @@ from sqlalchemy import create_engine, text
 
 pytestmark = pytest.mark.skipif(os.getenv("EVOROVE_TEST_POSTGRES") != "1", reason="isolated PostgreSQL not enabled")
 
+from test_postgres_research import isolated_postgres_url
+
 
 def test_postgres_has_qualification_tables_after_migrate():
-    url = os.getenv("EVOROVE_TEST_POSTGRES_URL", "postgresql+psycopg://evorove_test@127.0.0.1:55439/evorove_test")
+    url = isolated_postgres_url()
     engine = create_engine(url, future=True)
     with engine.connect() as connection:
         names = set(
