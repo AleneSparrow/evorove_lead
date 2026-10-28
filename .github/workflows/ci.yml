@@ -1,0 +1,55 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest-postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: evorove_test
+          POSTGRES_DB: evorove_test
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U evorove_test -d evorove_test"
+          --health-interval 5s --health-timeout 3s --health-retries 15
+    env:
+      EVOROVE_TEST_POSTGRES: "1"
+      EVOROVE_TEST_POSTGRES_URL: postgresql+psycopg://evorove_test@127.0.0.1:5432/evorove_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies and Chromium
+        run: |
+          python -m pip install -e '.[dev]'
+          python -m playwright install --with-deps chromium
+      - name: Upgrade and compare schema
+        run: |
+          python - <<'PY'
+          import os
+          from alembic import command
+          from alembic.config import Config
+          from sqlalchemy import create_engine
+
+          engine = create_engine(os.environ["EVOROVE_TEST_POSTGRES_URL"])
+          config = Config("alembic.ini")
+          with engine.connect() as connection:
+              config.attributes["connection"] = connection
+              command.upgrade(config, "head")
+              command.current(config)
+              command.check(config)
+          engine.dispose()
+          PY
+      - name: Run complete suite with PostgreSQL
+        run: python -m pytest -q -rs
