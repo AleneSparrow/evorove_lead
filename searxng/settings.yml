@@ -10,9 +10,10 @@
 #   https://docs.searxng.org/admin/settings/settings_engines.html
 #   https://docs.searxng.org/admin/settings/settings_outgoing.html
 #
-# No-key general engines we turn on: bing, yahoo, qwant. Brave stays on
-# as a reserve (default). Google CSE is already on and was the only
-# engine that answered on the client-zero dry-run.
+# Local pilot: Bing and Google CSE returned results. Brave, DuckDuckGo,
+# Qwant, and Yahoo repeatedly failed on 2026-10-28. Disable those four so
+# an empty query from healthy engines is reported as empty, not a transport
+# outage. Recheck engine health before changing this for another deployment.
 #
 # Not enabled, on purpose:
 #   startpage, mojeek — inactive upstream; Anubis/POW captcha, heavy CPU
@@ -30,11 +31,8 @@ search:
     - json
   # The client sends language=en-US on every request. That code is a SearxNG
   # search locale (language plus US region), distinct from the UI locale list,
-  # which on this image only exposes "en". Bing maps it to setlang and mkt.
-  # DuckDuckGo maps it to a language and a region. Google CSE maps it to hl
-  # and gl. Brave maps it to a country cookie, Qwant to a locale, and Yahoo to
-  # a language plus a regional domain; in the 2026-10-25 probe those three
-  # returned no hits (rate limit, access denied, parsing error). A hit that
+  # which on this image only exposes "en". Bing maps it to setlang and mkt;
+  # Google CSE maps it to hl and gl. A hit that
   # is still not English is dropped before a company page is fetched.
   # This file is read when the container starts. The probe used the request
   # parameter, not a restarted container.
@@ -58,20 +56,22 @@ engines:
     retries: 1
     retry_on_http_error: [429, 500, 502, 503, 504]
   - name: yahoo
-    disabled: false
+    disabled: true
     timeout: 5.0
     retries: 1
     retry_on_http_error: [429, 500, 502, 503, 504]
   - name: qwant
-    disabled: false
+    disabled: true
     timeout: 5.0
     retries: 1
     retry_on_http_error: [429, 500, 502, 503, 504]
   - name: brave
-    disabled: false
+    disabled: true
     timeout: 5.0
     retries: 1
     retry_on_http_error: [429]
+  - name: duckduckgo
+    disabled: true
   - name: wikipedia
     disabled: true
   - name: wikidata
