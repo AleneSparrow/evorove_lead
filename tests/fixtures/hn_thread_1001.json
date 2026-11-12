@@ -1,0 +1,14 @@
+{
+  "id": 1001,
+  "children": [
+    {
+      "text": "Northwind is hiring. https://boards.greenhouse.io/northwind/jobs/1 Contact hello@northwind.example."
+    },
+    {
+      "text": "Bright: https://jobs.lever.co/bright/1 and the site is https://bright.example"
+    },
+    {
+      "text": "Office hours only. https://jobs.ashbyhq.com/cedar/abc jane.doe@cedar.example is a person."
+    }
+  ]
+}

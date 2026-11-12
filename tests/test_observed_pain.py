@@ -58,6 +58,42 @@ def test_length_limit_and_no_invented_paraphrase():
                                  source_text=excerpt, offer=OFFER)
 
 
+def test_hiring_post_quotes_first_person_and_other_sources_do_not():
+    from evorove_lead.observed_pain import hiring_post_pain
+    offer = OfferUnderstanding(
+        (GroundedClaim('Evorove carries the sales conversation through closing.', 'service.txt'),),
+        (GroundedClaim('US B2B businesses', 'service.txt'),), (), (),
+    )
+    sentence = 'We have no sales team.'
+    wrapped, quote = hiring_post_pain(sentence, offer)
+    assert quote == sentence and quote in sentence
+    assert wrapped == 'Their job post says: "We have no sales team."'
+    assert len(wrapped) <= 500
+    assert not attach_observed_pain(candidate(sentence), offer, ((URL, sentence),)).observed_pain
+    assert hiring_post_pain(sentence, OFFER) == ('', '')
+    assert hiring_post_pain('The team is growing.', offer) == ('', '')
+    long = 'We have no sales team ' + ('again ' * 80) + '.'
+    assert len(f'Their job post says: "{long}"') > 500
+    wrapped, quote = hiring_post_pain(long + ' We have no sales team.', offer)
+    assert quote == 'We have no sales team.'
+    assert wrapped == 'Their job post says: "We have no sales team."'
+
+
+def test_founder_led_sales_sentence_is_pain_when_the_offer_sells_that():
+    offer = OfferUnderstanding(
+        (GroundedClaim('Evorove carries the sales conversation through closing.', 'service.txt'),),
+        (GroundedClaim('US B2B businesses', 'service.txt'),), (), (),
+    )
+    pain = 'The company has no sales team.'
+    result = attach_observed_pain(candidate(pain), offer, ((URL, pain),))
+    assert result.observed_pain == pain
+    avoided = replace(offer, what_we_sell=(GroundedClaim('replace or avoid a sales team', 'service.txt'),))
+    process = 'The company has no sales process.'
+    assert attach_observed_pain(candidate(process), avoided, ((URL, process),)).observed_pain == process
+    assert not attach_observed_pain(candidate('We have no sales team.'), offer, ((URL, 'We have no sales team.'),)).observed_pain
+    assert not attach_observed_pain(candidate(pain), OFFER, ((URL, pain),)).observed_pain
+
+
 def test_unrelated_sentence_on_candidate_page_not_promoted():
     assert not attach_observed_pain(candidate('The company is hiring.'), OFFER, ((URL, PAIN),)).observed_pain
 

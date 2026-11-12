@@ -97,7 +97,7 @@ class CandidateRecord:
     fit: float
     evidence: float
     addressable: bool
-    decision: str  # "cold" | "rejected"
+    decision: str  # "cold" | "needs_contact" | "rejected"
     decided_at: datetime
     trace_id: str = ""
     email: str = ""

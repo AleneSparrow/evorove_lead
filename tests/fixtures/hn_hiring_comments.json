@@ -1,0 +1,16 @@
+{
+  "hits": [
+    {
+      "objectID": "2001",
+      "comment_text": "Northwind is hiring. https://boards.greenhouse.io/northwind/jobs/1 Contact hello@northwind.example. https://linkedin.com/jobs/1 is not a board."
+    },
+    {
+      "objectID": "2002",
+      "comment_text": "Bright: https://jobs.lever.co/bright/1 and the site is https://bright.example"
+    },
+    {
+      "objectID": "2003",
+      "comment_text": "Cedar posting https://jobs.ashbyhq.com/cedar/abc jane.doe@cedar.example is a person, not a company mailbox."
+    }
+  ]
+}

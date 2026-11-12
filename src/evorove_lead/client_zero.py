@@ -79,8 +79,97 @@ def search_summary(result) -> dict[str, int | float | str | None]:
     }
 
 
-def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int | str]:
+def run_hiring_board_search(*, dry_run: bool, source=None, offer=None, sink=None, warehouse=None, fetch_text=None) -> dict:
+    """Client 0 buyers from public hiring threads. Dry-run does not publish or flush CRM."""
+    from evorove_lead.hiring_boards import collect_hiring, live_source, place_hiring_leads
+    from evorove_lead.offer import OfferRejected
+    from evorove_lead.offer_reader import read_offer
+    from evorove_lead.web_search import fetch_page_text
+
+    business_id = client_zero_seed().business_id
+    if offer is None:
+        try:
+            offer = read_offer(client_zero_presence().load(client_zero_seed()), require_audience=False)
+        except OfferRejected as exc:
+            return _hiring_summary(status="offer_incomplete", stop_reason=str(exc))
+    if source is None:
+        source = live_source()
+    report = collect_hiring(source, fetch_text=fetch_page_text if fetch_text is None else fetch_text)
+    placed = place_hiring_leads(
+        report.leads, offer, business_id=business_id, dry_run=dry_run, sink=sink, warehouse=warehouse,
+    )
+    summary = _hiring_summary(
+        status="people_found" if placed["candidates"] else "no_fit",
+        candidates=placed["candidates"],
+        handoffs=placed["handoffs"],
+        with_pain=placed["candidates_with_pain"],
+        without_pain=placed["candidates_without_pain"],
+        pain_ratio=placed["pain_ratio"],
+        with_contact=placed["with_contact"],
+        without_contact=placed["without_contact"],
+        threads_read=report.threads_read,
+        boards_found=report.boards_found,
+        boards_skipped=report.boards_skipped,
+        postings_read=report.postings_read,
+        requests=report.requests,
+        observed_pains=tuple(
+            candidate.observed_pain for candidate in placed["candidates"] if candidate.observed_pain
+        ),
+    )
+    if dry_run:
+        return summary
+    delivery = flush_crm_deliveries_from_env()
+    summary["crm_redelivered"] = delivery["redelivered"]
+    summary["crm_pending"] = delivery["pending"]
+    summary["crm_deferred"] = delivery["deferred"]
+    summary["crm_accepted_cold"] = delivery.get("accepted_cold", 0)
+    summary["crm_blocked_reason"] = delivery.get("blocked_reason", "")
+    return summary
+
+
+def _hiring_summary(*, status: str, stop_reason: str = "", candidates=(), handoffs: int = 0,
+                    with_pain: int = 0, without_pain: int = 0, pain_ratio=None,
+                    with_contact: int = 0, without_contact: int = 0,
+                    threads_read: int = 0, boards_found: int = 0, boards_skipped: int = 0,
+                    postings_read: int = 0, requests: int = 0, observed_pains: tuple = ()) -> dict:
+    return {
+        "status": status,
+        "source": "hiring_boards",
+        "candidates": len(candidates) if not isinstance(candidates, int) else candidates,
+        "candidates_with_pain": with_pain,
+        "candidates_without_pain": without_pain,
+        "pain_ratio": pain_ratio,
+        "handoffs": handoffs,
+        "rejected": 0,
+        "messages_sent": 0,
+        "crm_redelivered": 0,
+        "crm_pending": 0,
+        "crm_deferred": 0,
+        "crm_accepted_cold": 0,
+        "crm_blocked_reason": "",
+        "research_status": "completed" if status in {"people_found", "no_fit"} else "failed",
+        "research_stop_reason": stop_reason,
+        "stop_reason": stop_reason,
+        "observed_pains": list(observed_pains),
+        "hiring": {
+            "threads_read": threads_read,
+            "boards_found": boards_found,
+            "boards_skipped": boards_skipped,
+            "postings_read": postings_read,
+            "candidates": len(candidates) if not isinstance(candidates, int) else candidates,
+            "with_pain": with_pain,
+            "without_pain": without_pain,
+            "with_contact": with_contact,
+            "without_contact": without_contact,
+            "requests": requests,
+        },
+    }
+
+
+def run_client_zero_search(*, research_dry_run: bool = False, hiring_boards: bool = False) -> dict:
     from evorove_lead.web_search import SearchError
+    if hiring_boards or os.getenv("CLIENT_ZERO_HIRING_BOARDS") == "1":
+        return run_hiring_board_search(dry_run=research_dry_run)
     try:
         if research_dry_run and not (os.getenv("WEB_SEARCH_BASE_URL") or "").strip():
             raise SearchError("search_not_configured")
@@ -123,6 +212,10 @@ def run_client_zero_search(*, research_dry_run: bool = False) -> dict[str, int |
             # market, not a guess -- leave inference off (default `False`).
         )
         result = engine.generate(client_zero_seed())
+        if not result.candidates and result.stop_reason == "search_sources_unresponsive":
+            hiring = run_hiring_board_search(dry_run=research_dry_run)
+            hiring["searxng"] = "search_sources_unresponsive"
+            return hiring
         summary = search_summary(result)
         if result.stop_reason:
             summary["stop_reason"] = result.stop_reason
@@ -299,6 +392,7 @@ def main() -> None:
     parser.add_argument("--plan-sources", action="store_true")
     parser.add_argument("--list-niches", action="store_true")
     parser.add_argument("--niche", default="")
+    parser.add_argument("--hiring-boards", action="store_true")
     args = parser.parse_args()
     if args.list_niches:
         if args.source_dry_run or args.preflight or args.research_dry_run or args.probe_search or args.niche:
@@ -306,6 +400,8 @@ def main() -> None:
         from evorove_lead.lead_playbooks import niche_menu
         print(json.dumps(niche_menu(), indent=2))
         return
+    if args.hiring_boards and args.source_dry_run:
+        parser.error("--hiring-boards does not use source dry-run")
     if args.niche and not args.source_dry_run:
         parser.error("--niche requires --source-dry-run")
     if args.collect_only and args.analyze_only:
@@ -321,7 +417,7 @@ def main() -> None:
         report = preflight(probe_search=args.probe_search)
         print(json.dumps(report, indent=2))
         raise SystemExit(2 if report["blockers"] else 0)
-    summary = run_client_zero_search(research_dry_run=args.research_dry_run)
+    summary = run_client_zero_search(research_dry_run=args.research_dry_run, hiring_boards=args.hiring_boards)
     if args.research_dry_run:
         print(json.dumps(summary, indent=2))
         raise SystemExit(0 if summary.get("research_status") == "completed" else 2)
@@ -337,6 +433,12 @@ def main() -> None:
         without_pain=summary.get("candidates_without_pain", 0),
         ratio=summary.get("pain_ratio"),
     ))
+    hiring = summary.get("hiring")
+    if isinstance(hiring, dict):
+        print(
+            "hiring threads={threads_read} boards={boards_found} skipped={boards_skipped} "
+            "postings={postings_read} with_contact={with_contact} without_contact={without_contact}".format(**hiring)
+        )
     if summary.get("stop_reason"):
         print("stop_reason=" + str(summary["stop_reason"]))
     if summary["status"] in {"search_unconnected", "failed", "partial", "budget_exhausted"}:

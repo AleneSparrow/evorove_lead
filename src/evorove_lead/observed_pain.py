@@ -31,6 +31,11 @@ _RULES = (
         r"\b(?:staff|team|employees)\b.{0,70}\b(?:manually (?:copy|enter|transfer)|copy .{0,30} manually)\b",
         r"\b(?:hours|time)\b.{0,30}\b(?:each day|every day|each week|every week|wasted|lost)\b",
     ),
+    (
+        r"\b(?:replace or avoid a sales team|sales conversation)\b",
+        r"\b(?:founder-led sales|no sales team|without a sales team|no sales process|without a sales process)\b",
+        r"\b(?:founder-led sales|no sales team|without a sales team|no sales process|without a sales process)\b",
+    ),
 )
 # These sentences are not safe factual third-person observations of operations.
 _UNSAFE = re.compile(
@@ -86,6 +91,43 @@ def attach_observed_pain(candidate: Candidate, offer: OfferUnderstanding,
                 return replace(candidate, observed_pain=pain, pain_evidence_excerpt=excerpt,
                                pain_evidence_source=url)
     return candidate
+
+
+_HIRING_PHRASE = re.compile(
+    r"\b(?:founder-led sales|no sales team|without a sales team|no sales process|without a sales process)\b",
+    re.I,
+)
+_HIRING_CAPABILITY = re.compile(r"\b(?:replace or avoid a sales team|sales conversation)\b", re.I)
+_HIRING_ONE = re.compile(r"[A-Z][\x20-\x7e]*[.!?]\Z")
+
+
+def _sales_replacement_offer(offer: OfferUnderstanding) -> bool:
+    capabilities = " ".join(
+        claim.text for claim in offer.what_we_sell
+        if not re.search(r"\b(?:no|not|without|never|cannot)\b", claim.text, re.I)
+    )
+    return bool(_HIRING_CAPABILITY.search(capabilities))
+
+
+def hiring_post_pain(posting_text: str, offer: OfferUnderstanding) -> tuple[str, str]:
+    """First-person job posts. The quote is verbatim; the wrapper is fixed.
+
+    Other sources stay on `validate_pain`. This does not relax that path.
+    """
+    if not isinstance(posting_text, str) or not _sales_replacement_offer(offer):
+        return "", ""
+    pieces = re.split(r"(?<=[.!?])\s+|\n+", posting_text)
+    for piece in pieces:
+        sentence = piece.strip()
+        if not _HIRING_ONE.fullmatch(sentence):
+            continue
+        if sentence not in posting_text or not _HIRING_PHRASE.search(sentence) or not _grounded(sentence):
+            continue
+        wrapped = f'Their job post says: "{sentence}"'
+        if len(wrapped) > 500:
+            continue
+        return wrapped, sentence
+    return "", ""
 
 
 def pain_counts(candidates: Sequence[Candidate]) -> dict[str, int | float | None]:

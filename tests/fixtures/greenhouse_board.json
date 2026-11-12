@@ -1,0 +1,22 @@
+{
+  "jobs": [
+    {
+      "title": "Founding Account Executive",
+      "absolute_url": "https://boards.greenhouse.io/northwind/jobs/1",
+      "location": {"name": "United States"},
+      "content": "<p>We have no sales team.</p>"
+    },
+    {
+      "title": "Founding Engineer",
+      "absolute_url": "https://boards.greenhouse.io/northwind/jobs/2",
+      "location": {"name": "United States"},
+      "content": "<p>The company has no sales team.</p>"
+    },
+    {
+      "title": "Account Executive",
+      "absolute_url": "https://boards.greenhouse.io/northwind/jobs/3",
+      "location": {"name": "Remote"},
+      "content": "<p>The company has no sales team.</p>"
+    }
+  ]
+}
